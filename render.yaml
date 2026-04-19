@@ -1,0 +1,43 @@
+services:
+  # Web service - serves the PWA and API
+  - type: web
+    name: stocktracker-web
+    runtime: python
+    region: oregon            # cheapest; change if you prefer
+    plan: free                # upgrade to starter ($7/mo) to avoid cold-start sleep
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn backend.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+    envVars:
+      - key: DATABASE_PATH
+        value: /var/data/stocks.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: stocktracker-data
+      mountPath: /var/data
+      sizeGB: 1               # $0.25/month; more than enough
+
+  # Cron job - runs the alert worker every 5 minutes
+  - type: cron
+    name: stocktracker-alerts
+    runtime: python
+    region: oregon
+    schedule: "*/5 * * * *"   # every 5 minutes
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m worker.alerts"
+    envVars:
+      - key: DATABASE_PATH
+        value: /var/data/stocks.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Email secrets - set these in the Render dashboard, not here
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERT_FROM_EMAIL
+        sync: false
+      - key: ALERT_TO_EMAIL
+        sync: false
+    disk:
+      name: stocktracker-data  # shares the same disk as the web service
+      mountPath: /var/data
+      sizeGB: 1
