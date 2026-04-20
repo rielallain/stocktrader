@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0D1117">
+<title>StockTracker</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<!-- Header -->
+<header id="app-header">
+  <div class="header-left">
+    <h1 id="app-title">StockTracker</h1>
+    <span id="market-status" class="market-badge market-closed">● LOADING</span>
+  </div>
+  <div class="header-right">
+    <span id="last-updated"></span>
+    <button id="refresh-btn" class="btn-refresh">⟳ Refresh</button>
+  </div>
+</header>
+
+<!-- Summary panel -->
+<section id="summary-panel">
+  <div class="summary-item">
+    <span class="summary-label">PORTFOLIO</span>
+    <span id="summary-portfolio-count" class="summary-value">—</span>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">WATCHLIST</span>
+    <span id="summary-watchlist-count" class="summary-value">—</span>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">ALERTS</span>
+    <span id="summary-alerts" class="summary-value">—</span>
+  </div>
+</section>
+
+<!-- Toolbar -->
+<section id="toolbar">
+  <button id="add-ticker-btn" class="btn-toolbar">＋ Add Ticker</button>
+  <input id="filter-input" type="text" placeholder="🔍 Filter tickers…" autocomplete="off">
+  <div class="toolbar-spacer"></div>
+  <span id="connection-status" class="connection-ok">● online</span>
+</section>
+
+<!-- Tabs -->
+<nav id="tabs">
+  <button class="tab-btn active" data-tab="portfolio">Portfolio</button>
+  <button class="tab-btn" data-tab="watchlist">Watchlist</button>
+  <button class="tab-btn" data-tab="alerts">Alerts</button>
+</nav>
+
+<!-- Main content -->
+<main>
+  <section id="tab-portfolio" class="tab-panel active">
+    <div class="table-wrap">
+      <table id="portfolio-table" class="stock-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty-state hidden">No positions yet. Click "＋ Add Ticker" to begin.</div>
+    </div>
+  </section>
+
+  <section id="tab-watchlist" class="tab-panel">
+    <div class="table-wrap">
+      <table id="watchlist-table" class="stock-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty-state hidden">Watchlist is empty.</div>
+    </div>
+  </section>
+
+  <section id="tab-alerts" class="tab-panel">
+    <div class="alerts-header">
+      <h2>Alert Rules</h2>
+      <button id="add-alert-btn" class="btn-toolbar">＋ New Alert</button>
+    </div>
+    <div id="alerts-list"></div>
+    <h3 class="alerts-log-heading">Recent Fires</h3>
+    <div id="alerts-log"></div>
+  </section>
+</main>
+
+<!-- Detail panel (right side slide-in / mobile overlay) -->
+<aside id="detail-panel" class="hidden">
+  <header id="detail-header">
+    <div>
+      <div id="detail-ticker"></div>
+      <div id="detail-company"></div>
+    </div>
+    <button id="detail-close" aria-label="Close">✕</button>
+  </header>
+  <div id="detail-content"></div>
+</aside>
+<div id="detail-backdrop" class="hidden"></div>
+
+<!-- Add ticker modal -->
+<div id="add-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Add Ticker</h2>
+    <label>Exchange / Format
+      <select id="add-exchange">
+        <option value="US">US (NYSE/NASDAQ)</option>
+        <option value=".TO">Canada TSX (.TO)</option>
+        <option value=".V">Canada TSX-V (.V)</option>
+        <option value="-USD">Crypto (-USD)</option>
+        <option value=".L">UK LSE (.L)</option>
+        <option value=".DE">Germany (.DE)</option>
+        <option value=".PA">France (.PA)</option>
+        <option value=".AS">Netherlands (.AS)</option>
+        <option value=".AX">Australia (.AX)</option>
+        <option value=".T">Japan (.T)</option>
+        <option value=".HK">Hong Kong (.HK)</option>
+      </select>
+    </label>
+    <label>Ticker symbol
+      <input id="add-ticker-input" type="text" autocomplete="off" autocapitalize="characters">
+    </label>
+    <button id="add-validate-btn" class="btn-toolbar">🔍 Validate</button>
+    <div id="add-validation-result"></div>
+    <label>Endorsement price (optional)
+      <input id="add-endorsement" type="number" step="0.01" min="0">
+    </label>
+    <label>Target price (optional)
+      <input id="add-target" type="number" step="0.01" min="0">
+    </label>
+    <label>Add to
+      <select id="add-target-list">
+        <option value="portfolio">Portfolio</option>
+        <option value="watchlist" selected>Watchlist</option>
+        <option value="both">Both</option>
+      </select>
+    </label>
+    <div class="modal-actions">
+      <button id="add-cancel" class="btn-secondary">Cancel</button>
+      <button id="add-confirm" class="btn-primary">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- Alert modal -->
+<div id="alert-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2 id="alert-modal-title">New Alert</h2>
+    <label>Ticker
+      <select id="alert-ticker"></select>
+    </label>
+    <label>Rule type
+      <select id="alert-rule-type">
+        <option value="price_above">Price rises above…</option>
+        <option value="price_below">Price falls below…</option>
+        <option value="pct_from_endorsement">% move from endorsement…</option>
+        <option value="rsi_above">RSI rises above… (overbought)</option>
+        <option value="rsi_below">RSI falls below… (oversold)</option>
+      </select>
+    </label>
+    <label id="alert-threshold-label">Threshold
+      <input id="alert-threshold" type="number" step="0.01">
+    </label>
+    <small id="alert-threshold-hint" class="hint"></small>
+    <label class="checkbox-label">
+      <input type="checkbox" id="alert-one-shot" checked>
+      Fire once then deactivate (uncheck for repeating alerts)
+    </label>
+    <label>Note (optional)
+      <input id="alert-note" type="text" maxlength="200">
+    </label>
+    <div class="modal-actions">
+      <button id="alert-cancel" class="btn-secondary">Cancel</button>
+      <button id="alert-confirm" class="btn-primary">Create Alert</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+<script>
+  // Register service worker for PWA install + offline shell
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js').catch(console.warn);
+    });
+  }
+</script>
+</body>
+</html>
