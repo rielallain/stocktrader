@@ -1,0 +1,49 @@
+services:
+  # Web service - serves the PWA, API, and runs alert checks inline
+  # when the cron pokes /api/check-alerts.
+  - type: web
+    name: stocktracker-web
+    runtime: python
+    region: oregon
+    plan: starter             # $7/mo, allows disk, no cold-start sleep
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn backend.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+    envVars:
+      - key: DATABASE_PATH
+        value: /var/data/stocks.db
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: FINNHUB_API_KEY        # fallback when yfinance is rate-limited
+        sync: false
+      - key: RESEND_API_KEY         # for sending alert emails
+        sync: false
+      - key: ALERT_FROM_EMAIL       # defaults to onboarding@resend.dev
+        sync: false
+      - key: ALERT_TO_EMAIL         # where alert emails are sent
+        sync: false
+      - key: ALERT_CHECK_SECRET     # shared secret with the cron worker
+        generateValue: true
+    disk:
+      name: stocktracker-data
+      mountPath: /var/data
+      sizeGB: 1
+
+  # Cron job - every 5 minutes, pokes the web service's /api/check-alerts URL.
+  # No disk needed; this service is stateless. Free tier is fine.
+  - type: cron
+    name: stocktracker-alerts
+    runtime: python
+    region: oregon
+    schedule: "*/5 * * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m worker.alerts"
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: WEB_SERVICE_URL        # e.g. https://stocktrader-u9n5.onrender.com
+        sync: false
+      - key: ALERT_CHECK_SECRET     # same as on the web service
+        fromService:
+          type: web
+          name: stocktracker-web
+          envVarKey: ALERT_CHECK_SECRET
