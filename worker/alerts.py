@@ -71,9 +71,17 @@ def _send_email(subject: str, body: str) -> tuple[bool, str | None]:
     req = urllib.request.Request(
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode("utf-8"),
-        headers={
+                headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Render's egress IPs are in an AS that Cloudflare (which fronts
+            # api.resend.com) blocks with error 1010 when using the default
+            # Python urllib User-Agent. A normal-looking browser UA bypasses this.
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+                          "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                          "Version/17.0 Safari/605.1.15 stocktracker/1.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
         },
         method="POST",
     )
