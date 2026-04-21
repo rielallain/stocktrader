@@ -72,10 +72,35 @@ def _fetch_one_finnhub(ticker: str) -> Optional[Dict]:
     if not api_key:
         return None
 
-    # Finnhub uses bare US tickers (no .TO/.V/.DE suffix support on free tier
-    # for most non-US exchanges). We strip suffixes and try anyway; non-US
-    # tickers may simply not be findable on free Finnhub.
-    fh_symbol = ticker.split(".")[0].split("-")[0].upper()
+    # Don't fall back to Finnhub for non-US exchanges. Finnhub's free tier
+    # doesn't cover international exchanges, and stripping the suffix to try
+    # as a US ticker is DANGEROUS — AMT.V (AmeriTrust on TSXV) becomes AMT
+    # (American Tower on NYSE), which is a completely different company with
+    # totally different price. Return None so the caller shows "no data" instead
+    # of returning wrong data that silently gets stored.
+    non_us_suffixes = (
+        ".TO", ".V", ".CN", ".NE",      # Canada (TSX, TSXV, CSE, Cboe Canada)
+        ".L", ".AS", ".PA", ".MI", ".BR", ".LS", ".MC", ".BE", ".IR",  # Europe
+        ".DE", ".F", ".MU", ".SG", ".DU", ".HM", ".HA", ".VI",          # Germany/Austria
+        ".ST", ".HE", ".CO", ".OL",     # Nordics
+        ".SW", ".IL",                    # Switzerland/Israel
+        ".TA",                           # Tel Aviv
+        ".HK", ".SS", ".SZ", ".T", ".KS", ".KQ", ".TW", ".SI",          # Asia
+        ".AX", ".NZ",                    # Australia/NZ
+        ".SA", ".MX", ".BA",             # LatAm
+        ".JO",                           # Johannesburg
+    )
+    for suffix in non_us_suffixes:
+        if ticker.endswith(suffix):
+            log.warning(
+                f"Finnhub: skipping {ticker} — free tier doesn't cover {suffix} "
+                f"reliably and stripping the suffix risks returning a different "
+                f"US-listed company with the same base ticker"
+            )
+            return None
+
+    # Safe to pass the base ticker to Finnhub now
+    fh_symbol = ticker.upper()
 
     try:
         # /quote endpoint: current price, previous close, 52W high/low (sometimes)
@@ -87,6 +112,7 @@ def _fetch_one_finnhub(ticker: str) -> Optional[Dict]:
         if not quote or quote.get("c") in (None, 0):
             log.warning(f"Finnhub: no data for {fh_symbol}")
             return None
+
 
         current = float(quote["c"])  # current price
         previous = float(quote.get("pc") or current)  # previous close
