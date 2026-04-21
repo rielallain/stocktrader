@@ -428,6 +428,55 @@ def health():
     return jsonify({"ok": True})
 
 
+# -------------------------------------------------------------------
+# In-process alert scheduler
+#
+# Replaces the need for a separate Render cron job. A daemon thread starts
+# when the web service boots and runs the alert worker every 5 minutes.
+#
+# This is used because Render's cron IP range gets blocked by Cloudflare
+# when it tries to POST to the web service's public URL (error 1010). By
+# running the scheduler inside the web process itself, the check logic
+# runs directly against the local database — no HTTP call, no Cloudflare.
+#
+# Enabled by default; disable by setting ENABLE_SCHEDULER=false.
+# Interval in seconds configurable via SCHEDULER_INTERVAL_SECONDS
+# (default 300 = 5 minutes).
+# -------------------------------------------------------------------
+
+def _start_alert_scheduler():
+    """Spawn a daemon thread that calls run_once() on an interval."""
+    import threading
+    import time as _time
+
+    if os.environ.get("ENABLE_SCHEDULER", "true").lower() in ("false", "0", "no"):
+        log.info("Alert scheduler disabled via ENABLE_SCHEDULER env var")
+        return
+
+    interval = int(os.environ.get("SCHEDULER_INTERVAL_SECONDS", "300"))
+    log.info(f"Starting in-process alert scheduler (every {interval}s)")
+
+    def _loop():
+        # Small initial delay so startup finishes cleanly before first check
+        _time.sleep(30)
+        from worker.alerts import run_once
+        while True:
+            try:
+                result = run_once(force=False)
+                log.info(f"Scheduler tick: {result}")
+            except Exception as e:
+                log.error(f"Scheduler tick failed: {e}", exc_info=True)
+            _time.sleep(interval)
+
+    t = threading.Thread(target=_loop, name="alert-scheduler", daemon=True)
+    t.start()
+
+
+# Start the scheduler when the module is imported (e.g., by gunicorn).
+# Guarded by env var so we don't spawn a thread in test environments.
+_start_alert_scheduler()
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
