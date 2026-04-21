@@ -243,6 +243,7 @@ button, input, select, textarea {
 .ext-post    { color: var(--purple) !important; }
 .rsi-over    { color: var(--red); font-weight: 700; }
 .rsi-under   { color: var(--green); font-weight: 700; }
+.stale-dot   { color: var(--yellow); font-weight: 700; margin-left: 4px; cursor: help; }
 
 /* 52W range bar */
 .range-cell {
