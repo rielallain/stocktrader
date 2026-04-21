@@ -62,38 +62,20 @@ def _send_email(subject: str, body: str) -> tuple[bool, str | None]:
     if not api_key or not to_email:
         return False, "RESEND_API_KEY or ALERT_TO_EMAIL not configured"
 
-    payload = {
-        "from": f"StockTracker <{from_email}>",
-        "to": [to_email],
-        "subject": subject,
-        "text": body,
-    }
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=json.dumps(payload).encode("utf-8"),
-                headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            # Render's egress IPs are in an AS that Cloudflare (which fronts
-            # api.resend.com) blocks with error 1010 when using the default
-            # Python urllib User-Agent. A normal-looking browser UA bypasses this.
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
-                          "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                          "Version/17.0 Safari/605.1.15 stocktracker/1.0",
-            "Accept": "application/json,text/plain,*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-        method="POST",
-    )
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = f"StockTracker <{from_email}>"
+    msg["To"] = to_email
+
+    # Use SMTP instead of the HTTP API. Resend's HTTP API endpoint sits behind
+    # Cloudflare, which blocks Render's egress IPs with error 1010. SMTP runs
+    # on port 465 and bypasses Cloudflare entirely. Same API key, no new deps.
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read().decode("utf-8")
-            log.info(f"Email sent: {raw[:200]}")
-            return True, None
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        log.error(f"Resend HTTP {e.code}: {err_body}")
-        return False, f"HTTP {e.code}: {err_body[:300]}"
+        with smtplib.SMTP_SSL("smtp.resend.com", 465, timeout=15) as smtp:
+            smtp.login("resend", api_key)
+            smtp.sendmail(from_email, [to_email], msg.as_string())
+        log.info(f"Email sent via SMTP: {subject}")
+        return True, None
     except Exception as e:
         log.error(f"Email failed: {e}")
         return False, str(e)
