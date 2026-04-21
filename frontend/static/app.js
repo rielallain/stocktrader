@@ -194,8 +194,18 @@ function cellContent(s, key) {
     case 'company_name':
       return (s.company_name || s.ticker).replace(/</g, '&lt;');
 
-    case 'last_price':
-      return fmtNum(s.last_price, { prefix: '$' });
+    case 'last_price': {
+      const priceStr = fmtNum(s.last_price, { prefix: '$' });
+      if (s.last_price == null || !s.last_fetched) return priceStr;
+      // Mark as stale if last_fetched is from a different calendar day than today.
+      // Applies mainly to non-US tickers (TSX/TSX-V/DE) that Yahoo rate-limits.
+      const fetched = new Date(s.last_fetched);
+      const today = new Date();
+      const isStale = fetched.toDateString() !== today.toDateString();
+      if (!isStale) return priceStr;
+      const prettyDate = fetched.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      return `${priceStr}<span class="stale-dot" title="Price from ${prettyDate} — not refreshed today. Click ⟳ Refresh to retry.">●</span>`;
+    }
 
     case 'day_percent_change': {
       if (s.day_percent_change == null) return '<span class="neutral">—</span>';
