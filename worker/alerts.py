@@ -255,7 +255,18 @@ def poke_web_service(force: bool = False) -> int:
     req = urllib.request.Request(
         endpoint,
         data=b"",
-        headers={"X-Alert-Secret": secret, "Content-Type": "application/json"},
+        headers={
+            "X-Alert-Secret": secret,
+            "Content-Type": "application/json",
+            # Render's edge uses Cloudflare-style bot detection that 403s
+            # requests with the default Python urllib User-Agent (error 1010).
+            # Send a normal-looking browser UA to bypass this.
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+                          "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                          "Version/17.0 Safari/605.1.15 stocktracker-cron/1.0",
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
         method="POST",
     )
     try:
