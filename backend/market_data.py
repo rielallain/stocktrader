@@ -26,12 +26,25 @@ from backend.db import get_conn
 
 log = logging.getLogger(__name__)
 
-# Seconds to sleep between successive yfinance calls in a batch. Yahoo
-# aggressively rate-limits cloud IPs (Render egress), which causes fetches
-# to silently downgrade to Finnhub and lose RSI / 200-day SMA. Spacing the
-# batch out past Yahoo's burst threshold keeps us on the yfinance path for
-# US tickers. Override via env var if we need to tune.
-YFINANCE_BATCH_DELAY_SEC = float(os.environ.get("YFINANCE_BATCH_DELAY_SEC", "2.0"))
+# Seconds to sleep between successive yfinance calls in a batch. With the
+# curl_cffi browser-impersonation session below, pure delay isn't strictly
+# required, but a small spacing (default 0.5s) keeps us polite and smooths
+# out bursts. Override via env var.
+YFINANCE_BATCH_DELAY_SEC = float(os.environ.get("YFINANCE_BATCH_DELAY_SEC", "0.5"))
+
+# Yahoo aggressively rate-limits cloud-hosted IPs (Render egress) based on
+# TLS fingerprint + request patterns that scream "python bot". curl_cffi
+# impersonates a real Chrome browser at the TLS/HTTP level, which bypasses
+# most of Yahoo's anti-bot machinery and lets us pull full histories (so
+# RSI and 200-day SMA actually populate). Fall back to default yfinance
+# session if curl_cffi isn't available for any reason.
+_yf_session = None
+try:
+    from curl_cffi import requests as _curl_requests
+    _yf_session = _curl_requests.Session(impersonate="chrome")
+    log.info("yfinance: using curl_cffi Chrome-impersonation session")
+except Exception as e:
+    log.warning(f"yfinance: curl_cffi unavailable ({e}); using default session")
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -187,7 +200,7 @@ def fetch_one(ticker: str) -> Optional[Dict]:
     yfinance_failed_with_rate_limit = False
 
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=_yf_session) if _yf_session else yf.Ticker(ticker)
 
         # 1 year of daily closes — enough for 200-day SMA and 52W range
         hist = t.history(period="1y", auto_adjust=False)
@@ -391,7 +404,7 @@ def get_recent_news(ticker: str, hours: int = 24, limit: int = 2) -> List[Dict]:
     on any failure so alert sending never depends on news fetch."""
     # yfinance primary
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=_yf_session) if _yf_session else yf.Ticker(ticker)
         news = getattr(t, "news", None) or []
         cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
         out = []
