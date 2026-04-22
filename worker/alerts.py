@@ -197,14 +197,42 @@ def run_once(force: bool = False):
             continue
 
         subject = f"StockTracker alert: {rule['ticker']}"
-        ok, err = _send_email(subject, msg)
+
+        # Fetch recent news for context (best-effort, 10s max via underlying
+        # timeout). Correlation, not causation — we just attach the last
+        # ~24h of headlines so the reader can judge.
+        news_items: list[dict] = []
+        try:
+            from backend.market_data import get_recent_news
+            news_items = get_recent_news(rule["ticker"], hours=24, limit=2)
+        except Exception as e:
+            log.warning(f"News fetch failed for {rule['ticker']} (ignored): {e}")
+
+        # Compose the long-form body (email) and the short-form body (push)
+        email_body = msg
+        push_body = msg
+        if news_items:
+            email_body += "\n\nRecent news (last 24h):\n"
+            for n in news_items:
+                line = f"  • {n['title']}"
+                if n.get("publisher"):
+                    line += f"  ({n['publisher']})"
+                if n.get("url"):
+                    line += f"\n    {n['url']}"
+                email_body += line + "\n"
+            # Push has very limited space — one trimmed headline
+            top = news_items[0]
+            headline = top["title"][:140]
+            push_body = f"{msg}\n📰 {headline}"
+
+        ok, err = _send_email(subject, email_body)
 
         # Also push to any registered browser subscriptions. Best-effort —
         # don't let a push failure mark the email-backed alert as failed.
         try:
             from backend.push import send_to_all, is_configured
             if is_configured():
-                send_to_all(subject, msg, url="/")
+                send_to_all(subject, push_body, url="/")
         except Exception as e:
             log.warning(f"Push send failed (ignored): {e}")
 

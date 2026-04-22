@@ -340,3 +340,96 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
 def validate_ticker(ticker: str) -> Optional[Dict]:
     """Quick validation — just confirm the ticker exists and return basic info."""
     return fetch_one(ticker)
+
+
+# -------------------------------------------------------------------
+# Recent news (for alert context)
+# -------------------------------------------------------------------
+
+def _news_from_finnhub(ticker: str, hours: int, limit: int) -> List[Dict]:
+    api_key = os.environ.get("FINNHUB_API_KEY")
+    if not api_key:
+        return []
+    # Skip foreign suffixes — same rationale as _fetch_one_finnhub.
+    if any(ticker.upper().endswith(s) for s in (
+        ".TO", ".V", ".CN", ".NE", ".L", ".AS", ".PA", ".MI", ".DE", ".F",
+        ".ST", ".HE", ".CO", ".OL", ".SW", ".HK", ".T", ".KS", ".AX", ".SA"
+    )):
+        return []
+    from datetime import timedelta
+    to_date = datetime.now(timezone.utc).date()
+    from_date = to_date - timedelta(days=max(1, (hours + 23) // 24))
+    url = (
+        f"https://finnhub.io/api/v1/company-news"
+        f"?symbol={ticker.upper()}&from={from_date}&to={to_date}&token={api_key}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            items = json.loads(resp.read().decode("utf-8")) or []
+        cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+        out = []
+        for it in items:
+            if it.get("datetime", 0) < cutoff:
+                continue
+            out.append({
+                "title": it.get("headline", "")[:200],
+                "publisher": it.get("source", ""),
+                "url": it.get("url", ""),
+                "published_at": it.get("datetime"),
+            })
+            if len(out) >= limit:
+                break
+        return out
+    except Exception as e:
+        log.warning(f"Finnhub news failed for {ticker}: {e}")
+        return []
+
+
+def get_recent_news(ticker: str, hours: int = 24, limit: int = 2) -> List[Dict]:
+    """Return up to `limit` recent news items for ticker from the last `hours`.
+    Each item: {title, publisher, url, published_at}. Best-effort: returns []
+    on any failure so alert sending never depends on news fetch."""
+    # yfinance primary
+    try:
+        t = yf.Ticker(ticker)
+        news = getattr(t, "news", None) or []
+        cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+        out = []
+        for item in news:
+            # yfinance news shape varies across versions; look in both top-level
+            # and the nested 'content' dict some versions use.
+            content = item.get("content") or item
+            ts = (item.get("providerPublishTime")
+                  or content.get("pubDate")
+                  or content.get("displayTime"))
+            if isinstance(ts, str):
+                # ISO format fallback
+                try:
+                    ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    ts = None
+            if ts and ts < cutoff:
+                continue
+            title = item.get("title") or content.get("title")
+            if not title:
+                continue
+            publisher = (item.get("publisher")
+                         or (content.get("provider") or {}).get("displayName", ""))
+            link = (item.get("link")
+                    or (content.get("canonicalUrl") or {}).get("url", "")
+                    or (content.get("clickThroughUrl") or {}).get("url", ""))
+            out.append({
+                "title": title[:200],
+                "publisher": publisher,
+                "url": link,
+                "published_at": ts,
+            })
+            if len(out) >= limit:
+                break
+        if out:
+            return out
+    except Exception as e:
+        log.warning(f"yfinance news failed for {ticker}: {e}")
+
+    # Finnhub fallback
+    return _news_from_finnhub(ticker, hours, limit)
