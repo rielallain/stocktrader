@@ -746,10 +746,20 @@ async function refreshNow() {
   btn.disabled = true;
   btn.textContent = '⟳ Refreshing...';
   try {
-    await API.post('/api/refresh', {});
-    await loadStocks();
-    renderAll();
-    toast('Refreshed');
+    const resp = await API.post('/api/refresh', {});
+    if (resp.status === 'already_running') {
+      toast('Refresh already in progress', 'ok');
+    } else {
+      toast('Refresh started (~2 min for full batch)', 'ok');
+    }
+    // The backend refreshes in a daemon thread. Poll /api/stocks every 20s
+    // so the UI picks up new prices as they land instead of waiting for the
+    // 60s auto-refresh cycle.
+    for (let i = 0; i < 8; i++) {
+      await new Promise(r => setTimeout(r, 20_000));
+      await loadStocks();
+      renderAll();
+    }
   } catch (e) { toast(e.message, 'err'); }
   finally {
     btn.disabled = false;

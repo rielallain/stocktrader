@@ -287,10 +287,35 @@ def api_rename_stock(ticker):
     return jsonify(_stock_to_api(row))
 
 
+_refresh_lock = __import__("threading").Lock()
+_refresh_in_progress = False
+
+
 @app.post("/api/refresh")
 def api_refresh_all():
-    results = fetch_and_store_all()
-    return jsonify({"refreshed": list(results.keys()), "count": len(results)})
+    """Kick off a full refresh in the background and return immediately.
+    Full batch takes ~2-3 min (paced to avoid Yahoo's burst limiter), which
+    exceeds gunicorn's 120s worker timeout. The frontend should re-fetch
+    /api/stocks on a timer to see updated prices."""
+    import threading
+    global _refresh_in_progress
+    with _refresh_lock:
+        if _refresh_in_progress:
+            return jsonify({"status": "already_running"}), 202
+        _refresh_in_progress = True
+
+    def _run():
+        global _refresh_in_progress
+        try:
+            fetch_and_store_all()
+        except Exception as e:
+            log.error(f"Background refresh failed: {e}")
+        finally:
+            with _refresh_lock:
+                _refresh_in_progress = False
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "started"}), 202
 
 
 @app.post("/api/refresh/<ticker>")
