@@ -13,6 +13,7 @@ last_price/last_fetched columns.
 import json
 import logging
 import os
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -24,6 +25,13 @@ import yfinance as yf
 from backend.db import get_conn
 
 log = logging.getLogger(__name__)
+
+# Seconds to sleep between successive yfinance calls in a batch. Yahoo
+# aggressively rate-limits cloud IPs (Render egress), which causes fetches
+# to silently downgrade to Finnhub and lose RSI / 200-day SMA. Spacing the
+# batch out past Yahoo's burst threshold keeps us on the yfinance path for
+# US tickers. Override via env var if we need to tune.
+YFINANCE_BATCH_DELAY_SEC = float(os.environ.get("YFINANCE_BATCH_DELAY_SEC", "2.0"))
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -284,7 +292,12 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
         tickers = [r["ticker"] for r in rows]
 
     results: Dict[str, Dict] = {}
-    for ticker in tickers:
+    for i, ticker in enumerate(tickers):
+        # Pace the batch so Yahoo's burst limiter doesn't force us onto the
+        # Finnhub fallback path (which can't supply RSI / 200-day SMA).
+        # Single-ticker refreshes (len(tickers)==1) get no delay.
+        if i > 0 and YFINANCE_BATCH_DELAY_SEC > 0:
+            time.sleep(YFINANCE_BATCH_DELAY_SEC)
         data = fetch_one(ticker)
         if data is None:
             continue
