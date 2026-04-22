@@ -1,14 +1,17 @@
 """
 Refresh market data from GitHub Actions and POST it back to the web app.
 
-Why this exists: Yahoo Finance aggressively rate-limits cloud provider IPs
-(Render, AWS, GCP), so yfinance running on Render returns empty histories
-for US tickers. GitHub's runners have different IPs that Yahoo doesn't
-throttle the same way, so this script runs there and pushes the data in.
+Why this exists: Yahoo Finance now blocks both Render's IPs AND GitHub runner
+IPs (returns 429 / empty history). So we switched to Stooq for historical
+closes — it's free, no auth, no rate limits, and serves daily OHLC as CSV.
+We compute RSI and SMA-200 from that, and let the web app keep whatever
+current_price / market_cap / extended_price it already has (via COALESCE
+on the server side).
 
 Usage (from .github/workflows/refresh.yml):
     APP_URL=https://... BULK_REFRESH_SECRET=... python scripts/refresh_via_github.py
 """
+import io
 import os
 import sys
 import time
@@ -16,17 +19,10 @@ from typing import Optional
 
 import pandas as pd
 import requests
-import yfinance as yf
-from curl_cffi import requests as curl_requests
 
 APP_URL = os.environ["APP_URL"].rstrip("/")
 SECRET = os.environ["BULK_REFRESH_SECRET"]
-DELAY_SEC = float(os.environ.get("DELAY_SEC", "1.5"))
-
-# Chrome-impersonation session — yfinance will route Yahoo calls through this,
-# which bypasses the bot detection that returns "Too Many Requests" on bare
-# python-requests traffic.
-_SESSION = curl_requests.Session(impersonate="chrome")
+DELAY_SEC = float(os.environ.get("DELAY_SEC", "0.4"))
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -52,54 +48,60 @@ def _compute_sma_pct(closes: pd.Series, window: int = 200) -> Optional[float]:
     return float((closes.iloc[-1] - sma) / sma * 100)
 
 
+def _stooq_symbol(ticker: str) -> Optional[str]:
+    """Map our ticker format to Stooq's. Returns None for tickers we can't map."""
+    t = ticker.strip().upper()
+    # Crypto: BTC-USD -> btcusd, ETH-USD -> ethusd
+    if t.endswith("-USD"):
+        return t.replace("-", "").lower()
+    # Toronto: FOO.TO -> foo.ca (Stooq uses .ca for TSX)
+    if t.endswith(".TO"):
+        return t[:-3].lower() + ".ca"
+    # TSX Venture: FOO.V -> foo.v (Stooq uses .v)
+    if t.endswith(".V"):
+        return t[:-2].lower() + ".v"
+    # German: AIXA.DE -> aixa.de (same suffix)
+    if t.endswith(".DE"):
+        return t.lower()
+    # US: plain ticker -> ticker.us
+    if "." not in t and "-" not in t:
+        return t.lower() + ".us"
+    return None
+
+
 def fetch_one(ticker: str) -> Optional[dict]:
+    sym = _stooq_symbol(ticker)
+    if sym is None:
+        print(f"[{ticker}] no Stooq mapping")
+        return None
+    url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
     try:
-        t = yf.Ticker(ticker, session=_SESSION)
-        hist = t.history(period="1y", auto_adjust=False)
-        if hist.empty:
-            print(f"[{ticker}] empty history")
+        r = requests.get(url, timeout=20)
+        if r.status_code != 200:
+            print(f"[{ticker}] stooq HTTP {r.status_code}")
             return None
-        closes = hist["Close"].dropna()
+        body = r.text.strip()
+        if not body or body.lower().startswith("no data") or "," not in body:
+            print(f"[{ticker}] stooq no data ({sym})")
+            return None
+        df = pd.read_csv(io.StringIO(body))
+        if "Close" not in df.columns or df.empty:
+            print(f"[{ticker}] stooq unexpected format")
+            return None
+        closes = df["Close"].dropna()
         if closes.empty:
             return None
-
-        current = float(closes.iloc[-1])
-        previous = float(closes.iloc[-2]) if len(closes) >= 2 else current
-        volume = int(hist["Volume"].iloc[-1]) if not pd.isna(hist["Volume"].iloc[-1]) else None
-
-        company_name = None
-        market_cap = None
-        extended_price = None
-        extended_session = None
-        try:
-            info = t.info
-            company_name = info.get("longName") or info.get("shortName")
-            market_cap = info.get("marketCap")
-            pre_price = info.get("preMarketPrice")
-            post_price = info.get("postMarketPrice")
-            if post_price not in (None, 0) and abs(float(post_price) - current) > 1e-6:
-                extended_price = float(post_price)
-                extended_session = "post"
-            elif pre_price not in (None, 0) and abs(float(pre_price) - current) > 1e-6:
-                extended_price = float(pre_price)
-                extended_session = "pre"
-        except Exception as e:
-            print(f"[{ticker}] info lookup failed: {e}")
-
-        return {
+        # Stooq returns data sorted ascending by date
+        payload = {
             "ticker": ticker,
-            "company_name": company_name,
-            "current_price": current,
-            "previous_close": previous,
-            "volume": volume,
-            "market_cap": float(market_cap) if market_cap else None,
-            "high_52w": float(hist["High"].max()),
-            "low_52w": float(hist["Low"].min()),
             "rsi": _compute_rsi(closes),
             "sma_200_pct": _compute_sma_pct(closes),
-            "extended_price": extended_price,
-            "extended_session": extended_session,
         }
+        # Only include 52w high/low if we have enough history
+        if len(df) >= 200:
+            payload["high_52w"] = float(df["High"].tail(252).max())
+            payload["low_52w"] = float(df["Low"].tail(252).min())
+        return payload
     except Exception as e:
         print(f"[{ticker}] fetch_one failed: {e}")
         return None
@@ -110,14 +112,14 @@ def main() -> int:
     r = requests.get(f"{APP_URL}/api/stocks", timeout=30)
     r.raise_for_status()
     tickers = sorted({s["ticker"] for s in r.json()})
-    print(f"Fetching {len(tickers)} tickers from yfinance...")
+    print(f"Fetching {len(tickers)} tickers from Stooq...")
 
-    # 2. Fetch each one locally (GitHub runner IP, not rate-limited by Yahoo)
+    # 2. Fetch each one (Stooq has no meaningful rate limit for this volume)
     results: list[dict] = []
     failed: list[str] = []
     for ticker in tickers:
         data = fetch_one(ticker)
-        if data is not None:
+        if data is not None and data.get("rsi") is not None:
             results.append(data)
         else:
             failed.append(ticker)

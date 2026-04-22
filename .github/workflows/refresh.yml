@@ -28,7 +28,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install yfinance==0.2.55 pandas==2.2.3 requests==2.32.3 curl_cffi==0.7.3
+        run: pip install pandas==2.2.3 requests==2.32.3
 
       - name: Refresh market data
         env:
