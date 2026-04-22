@@ -316,6 +316,12 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
             continue
         results[ticker] = data
         with get_conn() as conn:
+            # COALESCE on rsi / sma_200_pct / market_cap / high_52w / low_52w
+            # so the Render-side refresh (which frequently falls back to
+            # Finnhub and returns None for these) doesn't wipe out fresh
+            # values pushed by the GitHub Actions refresh script.
+            # last_price, previous_close, volume, and extended_* are always
+            # updated because they're time-sensitive.
             conn.execute("""
                 UPDATE stocks SET
                     company_name     = COALESCE(?, company_name),
@@ -323,11 +329,11 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
                     last_fetched     = ?,
                     previous_close   = ?,
                     volume           = ?,
-                    market_cap       = ?,
-                    high_52w         = ?,
-                    low_52w          = ?,
-                    rsi              = ?,
-                    sma_200_pct      = ?,
+                    market_cap       = COALESCE(?, market_cap),
+                    high_52w         = COALESCE(?, high_52w),
+                    low_52w          = COALESCE(?, low_52w),
+                    rsi              = COALESCE(?, rsi),
+                    sma_200_pct      = COALESCE(?, sma_200_pct),
                     extended_price   = ?,
                     extended_session = ?
                 WHERE ticker = ?

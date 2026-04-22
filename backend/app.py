@@ -318,6 +318,77 @@ def api_refresh_all():
     return jsonify({"status": "started"}), 202
 
 
+@app.post("/api/bulk-upsert")
+def api_bulk_upsert():
+    """Accept a batch of ticker data fetched elsewhere (e.g. by a GitHub
+    Action running yfinance from GitHub's IPs) and write it into the DB.
+    Authenticated via BULK_REFRESH_SECRET so randoms can't poison the DB.
+
+    Body: JSON array of dicts matching market_data.fetch_one's output.
+    Missing fields in a dict are preserved (COALESCE), so this endpoint
+    can be used to update just RSI/SMA without clobbering current prices."""
+    secret = os.environ.get("BULK_REFRESH_SECRET")
+    provided = request.headers.get("X-Refresh-Token", "")
+    if not secret or provided != secret:
+        return jsonify({"error": "unauthorized"}), 401
+
+    items = request.get_json(force=True)
+    if not isinstance(items, list):
+        return jsonify({"error": "expected a JSON array"}), 400
+
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updated = 0
+    skipped: list[str] = []
+
+    with get_conn() as conn:
+        for d in items:
+            ticker = (d.get("ticker") or "").upper()
+            if not ticker:
+                skipped.append("<missing ticker>")
+                continue
+            cur = conn.execute("""
+                UPDATE stocks SET
+                    company_name     = COALESCE(?, company_name),
+                    last_price       = COALESCE(?, last_price),
+                    last_fetched     = ?,
+                    previous_close   = COALESCE(?, previous_close),
+                    volume           = COALESCE(?, volume),
+                    market_cap       = COALESCE(?, market_cap),
+                    high_52w         = COALESCE(?, high_52w),
+                    low_52w          = COALESCE(?, low_52w),
+                    rsi              = COALESCE(?, rsi),
+                    sma_200_pct      = COALESCE(?, sma_200_pct),
+                    extended_price   = ?,
+                    extended_session = ?
+                WHERE ticker = ?
+            """, (
+                d.get("company_name"),
+                d.get("current_price"),
+                now_iso,
+                d.get("previous_close"),
+                d.get("volume"),
+                d.get("market_cap"),
+                d.get("high_52w"),
+                d.get("low_52w"),
+                d.get("rsi"),
+                d.get("sma_200_pct"),
+                d.get("extended_price"),
+                d.get("extended_session"),
+                ticker,
+            ))
+            if cur.rowcount == 0:
+                skipped.append(ticker)
+            else:
+                updated += 1
+
+    return jsonify({
+        "updated": updated,
+        "received": len(items),
+        "skipped": skipped,
+    })
+
+
 @app.post("/api/refresh/<ticker>")
 def api_refresh_one(ticker):
     ticker = ticker.upper()
