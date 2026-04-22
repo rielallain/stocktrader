@@ -161,6 +161,18 @@ def init_schema():
             ON alert_log(fired_at DESC)
         """)
 
+        # --- Migrations: additive columns on existing `stocks` table ---
+        # Each wrapped in try/except because SQLite lacks "ADD COLUMN IF NOT EXISTS".
+        for col_sql in (
+            "ALTER TABLE stocks ADD COLUMN extended_price REAL",
+            "ALTER TABLE stocks ADD COLUMN extended_session TEXT",  # 'pre' | 'post' | NULL
+        ):
+            try:
+                cur.execute(col_sql)
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+
         print("[db] Schema initialized")
 
 

@@ -196,15 +196,31 @@ function cellContent(s, key) {
 
     case 'last_price': {
       const priceStr = fmtNum(s.last_price, { prefix: '$' });
-      if (s.last_price == null || !s.last_fetched) return priceStr;
-      // Mark as stale if last_fetched is from a different calendar day than today.
-      // Applies mainly to non-US tickers (TSX/TSX-V/DE) that Yahoo rate-limits.
-      const fetched = new Date(s.last_fetched);
-      const today = new Date();
-      const isStale = fetched.toDateString() !== today.toDateString();
-      if (!isStale) return priceStr;
-      const prettyDate = fetched.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `${priceStr}<span class="stale-dot" title="Price from ${prettyDate} — not refreshed today. Click ⟳ Refresh to retry.">●</span>`;
+      if (s.last_price == null) return priceStr;
+
+      // Extended-hours price, colored blue (pre) / purple (post). Shown as a
+      // small delta vs regular close so you can see the move at a glance.
+      let extHtml = '';
+      if (s.extended_price != null && s.extended_session) {
+        const diff = s.extended_price - s.last_price;
+        const cls = s.extended_session === 'pre' ? 'ext-pre' : 'ext-post';
+        const label = s.extended_session === 'pre' ? 'pre-market' : 'after-hours';
+        const sign = diff >= 0 ? '+' : '';
+        extHtml = ` <span class="${cls}" title="${label}: $${s.extended_price.toFixed(2)}">${sign}${diff.toFixed(2)}</span>`;
+      }
+
+      // Stale indicator (yellow dot) if price wasn't refreshed today.
+      let staleHtml = '';
+      if (s.last_fetched) {
+        const fetched = new Date(s.last_fetched);
+        const today = new Date();
+        const isStale = fetched.toDateString() !== today.toDateString();
+        if (isStale) {
+          const prettyDate = fetched.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          staleHtml = `<span class="stale-dot" title="Price from ${prettyDate} — not refreshed today. Click ⟳ Refresh to retry.">●</span>`;
+        }
+      }
+      return `${priceStr}${extHtml}${staleHtml}`;
     }
 
     case 'day_percent_change': {
@@ -395,6 +411,13 @@ function showDetail(ticker) {
       <div class="change ${gainLossClass(s.day_percent_change)}">
         ${signed(s.day_dollar_change)} (${signed(s.day_percent_change, 2, '%')})
       </div>`;
+  if (s.extended_price != null && s.extended_session) {
+    const diff = s.extended_price - s.last_price;
+    const cls = s.extended_session === 'pre' ? 'ext-pre' : 'ext-post';
+    const label = s.extended_session === 'pre' ? 'Pre-market' : 'After-hours';
+    const sign = diff >= 0 ? '+' : '';
+    priceHtml += `<div class="${cls}" style="font-size:12px;margin-top:4px;">${label}: $${s.extended_price.toFixed(2)} (${sign}${diff.toFixed(2)})</div>`;
+  }
   if (s.previous_close) {
     priceHtml += `<div style="color:var(--muted);font-size:11px;margin-top:4px;">Previous close: $${s.previous_close.toFixed(2)}</div>`;
   }

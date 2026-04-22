@@ -159,6 +159,8 @@ def _fetch_one_finnhub(ticker: str) -> Optional[Dict]:
             "low_52w": low_52w,
             "rsi": None,              # not available on free tier
             "sma_200_pct": None,      # not available on free tier
+            "extended_price": None,    # Finnhub free tier doesn't surface this
+            "extended_session": None,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
     except urllib.error.HTTPError as e:
@@ -208,6 +210,13 @@ def fetch_one(ticker: str) -> Optional[Dict]:
         except Exception:
             pass
 
+        # Extended-hours pricing: yfinance exposes pre/post market prices via .info
+        # for most US tickers. Non-US tickers (TSX, .DE, etc.) won't have these —
+        # we silently leave them None, no harm done.
+        extended_price = None
+        extended_session = None
+        info = None
+
         if company_name is None or market_cap is None:
             try:
                 info = t.info
@@ -215,6 +224,25 @@ def fetch_one(ticker: str) -> Optional[Dict]:
                 market_cap = market_cap or info.get("marketCap")
             except Exception:
                 pass
+
+        if info is None:
+            try:
+                info = t.info
+            except Exception:
+                info = {}
+
+        if info:
+            post_price = info.get("postMarketPrice")
+            pre_price = info.get("preMarketPrice")
+            # Prefer post-market if both are set (post comes later in the day).
+            # Only surface the extended price if it actually differs from the
+            # regular-session close — otherwise it's redundant noise.
+            if post_price not in (None, 0) and abs(float(post_price) - current) > 1e-6:
+                extended_price = float(post_price)
+                extended_session = "post"
+            elif pre_price not in (None, 0) and abs(float(pre_price) - current) > 1e-6:
+                extended_price = float(pre_price)
+                extended_session = "pre"
 
         return {
             "ticker": ticker,
@@ -227,6 +255,8 @@ def fetch_one(ticker: str) -> Optional[Dict]:
             "low_52w": low_52w,
             "rsi": rsi,
             "sma_200_pct": sma_pct,
+            "extended_price": extended_price,
+            "extended_session": extended_session,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
@@ -262,16 +292,18 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
         with get_conn() as conn:
             conn.execute("""
                 UPDATE stocks SET
-                    company_name   = COALESCE(?, company_name),
-                    last_price     = ?,
-                    last_fetched   = ?,
-                    previous_close = ?,
-                    volume         = ?,
-                    market_cap     = ?,
-                    high_52w       = ?,
-                    low_52w        = ?,
-                    rsi            = ?,
-                    sma_200_pct    = ?
+                    company_name     = COALESCE(?, company_name),
+                    last_price       = ?,
+                    last_fetched     = ?,
+                    previous_close   = ?,
+                    volume           = ?,
+                    market_cap       = ?,
+                    high_52w         = ?,
+                    low_52w          = ?,
+                    rsi              = ?,
+                    sma_200_pct      = ?,
+                    extended_price   = ?,
+                    extended_session = ?
                 WHERE ticker = ?
             """, (
                 data["company_name"],
@@ -284,6 +316,8 @@ def fetch_and_store_all(tickers: Optional[List[str]] = None) -> Dict[str, Dict]:
                 data["low_52w"],
                 data["rsi"],
                 data["sma_200_pct"],
+                data.get("extended_price"),
+                data.get("extended_session"),
                 ticker,
             ))
 
