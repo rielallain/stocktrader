@@ -254,6 +254,39 @@ def api_move_stock(ticker):
     return jsonify(_stock_to_api(row))
 
 
+@app.post("/api/stocks/<ticker>/rename")
+def api_rename_stock(ticker):
+    """Rename a ticker symbol, preserving alerts, watchlist memberships, and log history.
+    Body: {"new": "NEWSYM"}. Useful for fixing suffixes (e.g. VMET -> VMET.TO)."""
+    old = ticker.upper()
+    new = (request.get_json(force=True).get("new") or "").strip().upper()
+    if not new or new == old:
+        return jsonify({"error": "Invalid new ticker"}), 400
+
+    with get_conn() as conn:
+        if not conn.execute("SELECT 1 FROM stocks WHERE ticker = ?", (old,)).fetchone():
+            return jsonify({"error": f"{old} not found"}), 404
+        if conn.execute("SELECT 1 FROM stocks WHERE ticker = ?", (new,)).fetchone():
+            return jsonify({"error": f"{new} already exists"}), 409
+
+        # Defer FK checks until commit so we can update parent + children in any order
+        conn.execute("PRAGMA defer_foreign_keys = ON")
+        conn.execute("UPDATE stocks            SET ticker = ? WHERE ticker = ?", (new, old))
+        conn.execute("UPDATE watchlist_members SET ticker = ? WHERE ticker = ?", (new, old))
+        conn.execute("UPDATE alert_rules       SET ticker = ? WHERE ticker = ?", (new, old))
+        conn.execute("UPDATE alert_log         SET ticker = ? WHERE ticker = ?", (new, old))
+
+    # Refresh price data under the new symbol (best-effort)
+    try:
+        fetch_and_store_all([new])
+    except Exception as e:
+        log.warning(f"Rename {old}->{new}: refresh failed ({e}); row kept with stale price")
+
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM stocks WHERE ticker = ?", (new,)).fetchone()
+    return jsonify(_stock_to_api(row))
+
+
 @app.post("/api/refresh")
 def api_refresh_all():
     results = fetch_and_store_all()
