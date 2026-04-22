@@ -1,0 +1,17 @@
+# SQLite write-ahead-log / shared-memory files
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Env / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
