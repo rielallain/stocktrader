@@ -3,7 +3,7 @@
 // is waking up from cold sleep on Render's free tier. API calls always go
 // network-first.
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL_CACHE = `stocktracker-shell-${VERSION}`;
 const SHELL_ASSETS = [
   '/',
@@ -26,6 +26,38 @@ self.addEventListener('activate', (e) => {
     caches.keys().then((keys) => Promise.all(
       keys.filter((k) => k !== SHELL_CACHE).map((k) => caches.delete(k))
     )).then(() => self.clients.claim())
+  );
+});
+
+// Web Push: show a notification when the server pushes one.
+self.addEventListener('push', (event) => {
+  let data = { title: 'StockTracker', body: '', url: '/' };
+  if (event.data) {
+    try { data = { ...data, ...event.data.json() }; }
+    catch { data.body = event.data.text(); }
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: data.url },
+      tag: 'stocktracker-alert',
+    })
+  );
+});
+
+// Clicking a notification: focus an existing tab if open, else open one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      for (const w of windows) {
+        if ('focus' in w) return w.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
   );
 });
 

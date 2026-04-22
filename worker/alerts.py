@@ -199,6 +199,15 @@ def run_once(force: bool = False):
         subject = f"StockTracker alert: {rule['ticker']}"
         ok, err = _send_email(subject, msg)
 
+        # Also push to any registered browser subscriptions. Best-effort —
+        # don't let a push failure mark the email-backed alert as failed.
+        try:
+            from backend.push import send_to_all, is_configured
+            if is_configured():
+                send_to_all(subject, msg, url="/")
+        except Exception as e:
+            log.warning(f"Push send failed (ignored): {e}")
+
         with get_conn() as conn:
             conn.execute("""
                 INSERT INTO alert_log (rule_id, ticker, rule_type, threshold,

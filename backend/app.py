@@ -453,6 +453,65 @@ def api_alert_log():
 
 
 # -------------------------------------------------------------------
+# Web Push notifications
+# -------------------------------------------------------------------
+
+@app.get("/api/push/public-key")
+def api_push_public_key():
+    """Expose the VAPID public key so the frontend can subscribe."""
+    from backend.push import VAPID_PUBLIC_KEY, is_configured
+    if not is_configured():
+        return jsonify({"error": "Push not configured"}), 503
+    return jsonify({"key": VAPID_PUBLIC_KEY})
+
+
+@app.post("/api/push/subscribe")
+def api_push_subscribe():
+    """Register a browser push subscription. Idempotent on endpoint."""
+    sub = request.get_json(force=True)
+    endpoint = sub.get("endpoint")
+    keys = sub.get("keys") or {}
+    p256dh = keys.get("p256dh")
+    auth = keys.get("auth")
+    if not (endpoint and p256dh and auth):
+        return jsonify({"error": "Invalid subscription payload"}), 400
+
+    ua = request.headers.get("User-Agent", "")[:500]
+
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_agent)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(endpoint) DO UPDATE SET
+                p256dh = excluded.p256dh,
+                auth   = excluded.auth,
+                user_agent = excluded.user_agent
+        """, (endpoint, p256dh, auth, ua))
+    return jsonify({"ok": True}), 201
+
+
+@app.post("/api/push/unsubscribe")
+def api_push_unsubscribe():
+    endpoint = (request.get_json(force=True) or {}).get("endpoint")
+    if not endpoint:
+        return jsonify({"error": "endpoint required"}), 400
+    with get_conn() as conn:
+        conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/push/test")
+def api_push_test():
+    """Send a test push to all registered subscriptions."""
+    from backend.push import send_to_all
+    sent, pruned = send_to_all(
+        "StockTracker test",
+        "Push notifications are working.",
+    )
+    return jsonify({"sent": sent, "pruned": pruned})
+
+
+# -------------------------------------------------------------------
 # Health check (useful for Render uptime monitoring)
 # -------------------------------------------------------------------
 

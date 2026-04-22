@@ -784,6 +784,18 @@ async function init() {
 
   document.getElementById('refresh-btn').addEventListener('click', refreshNow);
 
+  // Push notifications toggle
+  const pushBtn = document.getElementById('push-btn');
+  if (pushBtn) {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) ||
+        (typeof Notification === 'undefined')) {
+      pushBtn.style.display = 'none';
+    } else {
+      pushBtn.addEventListener('click', togglePush);
+      updatePushButton();
+    }
+  }
+
   // Filter
   document.getElementById('filter-input').addEventListener('input', (e) => {
     state.filter = e.target.value;
@@ -822,6 +834,69 @@ async function init() {
     await loadAlerts();
     renderAll();
   }, 60_000);
+}
+
+// ---------- push notifications ----------
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+async function updatePushButton() {
+  const btn = document.getElementById('push-btn');
+  if (!btn) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub && Notification.permission === 'granted') {
+      btn.textContent = '🔕';
+      btn.title = 'Disable push notifications';
+    } else {
+      btn.textContent = '🔔';
+      btn.title = 'Enable push notifications for alerts';
+    }
+  } catch (e) {
+    console.warn('push button state', e);
+  }
+}
+
+async function togglePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+
+    if (existing && Notification.permission === 'granted') {
+      // Unsubscribe
+      await API.post('/api/push/unsubscribe', { endpoint: existing.endpoint });
+      await existing.unsubscribe();
+      toast('Push notifications disabled', 'ok');
+      await updatePushButton();
+      return;
+    }
+
+    // Subscribe
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      toast('Notification permission denied', 'err');
+      return;
+    }
+
+    const { key } = await API.get('/api/push/public-key');
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8Array(key),
+    });
+    await API.post('/api/push/subscribe', sub.toJSON());
+    toast('Push notifications enabled', 'ok');
+    await updatePushButton();
+  } catch (e) {
+    console.error('togglePush', e);
+    toast('Failed: ' + (e.message || e), 'err');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

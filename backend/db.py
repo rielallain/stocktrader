@@ -161,6 +161,18 @@ def init_schema():
             ON alert_log(fired_at DESC)
         """)
 
+        # Web Push subscriptions (one row per browser/device that opted in)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                endpoint   TEXT NOT NULL UNIQUE,
+                p256dh     TEXT NOT NULL,
+                auth       TEXT NOT NULL,
+                user_agent TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
         # --- Migrations: additive columns on existing `stocks` table ---
         # Each wrapped in try/except because SQLite lacks "ADD COLUMN IF NOT EXISTS".
         for col_sql in (
