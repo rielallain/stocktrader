@@ -226,6 +226,29 @@ button, input, select, textarea {
 .stock-table tbody tr:hover           { background-color: var(--bg-hover); }
 .stock-table tbody tr.selected        { background-color: var(--bg-select); }
 
+/* ------ Sticky ticker column ------
+ * First column (ticker) stays pinned to the left edge during horizontal
+ * scrolling so you always know which row you're reading. Requires an
+ * explicit background on the sticky cells (otherwise scrolled content
+ * bleeds through) and background overrides for every row-state variant. */
+.stock-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 3;  /* above both sticky header row and sticky body column */
+  background-color: var(--bg-alt);
+  box-shadow: 1px 0 0 var(--border-dim);
+}
+.stock-table tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background-color: var(--bg);
+  box-shadow: 1px 0 0 var(--border-dim);
+}
+.stock-table tbody tr:nth-child(even) td:first-child { background-color: var(--bg-row); }
+.stock-table tbody tr:hover           td:first-child { background-color: var(--bg-hover); }
+.stock-table tbody tr.selected        td:first-child { background-color: var(--bg-select); }
+
 .stock-table td {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border-dim);
@@ -525,17 +548,14 @@ button, input, select, textarea {
   #toolbar { padding: 8px 12px; }
   .tab-btn { padding: 10px 16px; font-size: 13px; }
 
-  /* Mobile tables: card layout instead of wide table */
-  .stock-table thead {
-    /* Keep only essential columns visible on mobile */
-  }
+  /* Mobile tables: narrower cells, all columns reachable via horizontal
+   * scroll. The ticker column is pinned (see .stock-table rules above)
+   * so it stays visible as you swipe across. */
   .stock-table thead th,
   .stock-table tbody td {
     font-size: 12px;
     padding: 6px 8px;
   }
-  /* Hide less-critical columns on narrow screens */
-  .col-hide-mobile { display: none; }
 
   /* Detail panel takes full screen on mobile */
   #detail-panel {
