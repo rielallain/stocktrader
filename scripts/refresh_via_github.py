@@ -17,10 +17,16 @@ from typing import Optional
 import pandas as pd
 import requests
 import yfinance as yf
+from curl_cffi import requests as curl_requests
 
 APP_URL = os.environ["APP_URL"].rstrip("/")
 SECRET = os.environ["BULK_REFRESH_SECRET"]
-DELAY_SEC = float(os.environ.get("DELAY_SEC", "0.3"))
+DELAY_SEC = float(os.environ.get("DELAY_SEC", "1.5"))
+
+# Chrome-impersonation session — yfinance will route Yahoo calls through this,
+# which bypasses the bot detection that returns "Too Many Requests" on bare
+# python-requests traffic.
+_SESSION = curl_requests.Session(impersonate="chrome")
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -48,7 +54,7 @@ def _compute_sma_pct(closes: pd.Series, window: int = 200) -> Optional[float]:
 
 def fetch_one(ticker: str) -> Optional[dict]:
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=_SESSION)
         hist = t.history(period="1y", auto_adjust=False)
         if hist.empty:
             print(f"[{ticker}] empty history")
