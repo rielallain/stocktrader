@@ -398,6 +398,7 @@ function showDetail(ticker) {
   state.selectedTicker = ticker;
   const s = state.stocks.find(x => x.ticker === ticker);
   if (!s) return;
+  updateBackBtn();
   _navPushModal('detail');
 
   document.getElementById('detail-ticker').textContent = s.ticker;
@@ -500,6 +501,7 @@ function hideDetail() {
   document.getElementById('detail-panel').classList.add('hidden');
   document.getElementById('detail-backdrop').classList.add('hidden');
   state.selectedTicker = null;
+  updateBackBtn();
   if (wasOpen) _navBack();
 }
 
@@ -641,6 +643,7 @@ function openAlertModal(prefillTicker = null) {
   document.getElementById('alert-note').value = '';
   document.getElementById('alert-one-shot').checked = true;
   modal.classList.remove('hidden');
+  updateBackBtn();
   _navPushModal('alert');
 }
 
@@ -682,6 +685,7 @@ async function confirmAlert() {
     await loadAlerts();
     renderAlerts(); renderSummary();
     document.getElementById('alert-modal').classList.add('hidden');
+    updateBackBtn();
     _navBack();
     toast('Alert created');
   } catch (e) { toast(e.message, 'err'); }
@@ -695,6 +699,7 @@ function openAddModal() {
   document.getElementById('add-validation-result').textContent = '';
   document.getElementById('add-validation-result').className = '';
   document.getElementById('add-modal').classList.remove('hidden');
+  updateBackBtn();
   _navPushModal('add');
 }
 
@@ -742,6 +747,7 @@ async function confirmAdd() {
     await loadStocks();
     renderAll();
     document.getElementById('add-modal').classList.add('hidden');
+    updateBackBtn();
     _navBack();
     toast(`Added ${body.ticker}`);
   } catch (e) { toast(e.message, 'err'); }
@@ -785,6 +791,20 @@ function switchTab(name) {
     b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + name));
+  updateBackBtn();
+}
+
+// Visible whenever there's something to go back from: a modal is open,
+// or we're on a tab other than Portfolio.
+function updateBackBtn() {
+  const btn = document.getElementById('back-btn');
+  if (!btn) return;
+  const modalOpen =
+    !document.getElementById('detail-panel')?.classList.contains('hidden') ||
+    !document.getElementById('alert-modal')?.classList.contains('hidden') ||
+    !document.getElementById('add-modal')?.classList.contains('hidden');
+  const shouldShow = modalOpen || state.activeTab !== 'portfolio';
+  btn.classList.toggle('hidden', !shouldShow);
 }
 
 // ---------- back-button / history integration ----------
@@ -813,6 +833,7 @@ window.addEventListener('popstate', (e) => {
       const targetTab = (e.state && e.state.nav === 'tab' && e.state.name) || 'portfolio';
       if (state.activeTab !== targetTab) switchTab(targetTab);
     }
+    updateBackBtn();
   } finally {
     _navPopping = false;
   }
@@ -835,6 +856,9 @@ async function init() {
     b.addEventListener('click', () => switchTab(b.dataset.tab)));
 
   document.getElementById('refresh-btn').addEventListener('click', refreshNow);
+
+  // In-app back button (primarily for iOS where there's no system back)
+  document.getElementById('back-btn').addEventListener('click', () => history.back());
 
   // Push notifications toggle
   const pushBtn = document.getElementById('push-btn');
@@ -859,6 +883,7 @@ async function init() {
   document.getElementById('add-ticker-btn').addEventListener('click', openAddModal);
   document.getElementById('add-cancel').onclick = () => {
     document.getElementById('add-modal').classList.add('hidden');
+    updateBackBtn();
     _navBack();
   };
   document.getElementById('add-confirm').onclick = confirmAdd;
@@ -868,6 +893,7 @@ async function init() {
   document.getElementById('add-alert-btn').addEventListener('click', () => openAlertModal());
   document.getElementById('alert-cancel').onclick = () => {
     document.getElementById('alert-modal').classList.add('hidden');
+    updateBackBtn();
     _navBack();
   };
   document.getElementById('alert-confirm').onclick = confirmAlert;

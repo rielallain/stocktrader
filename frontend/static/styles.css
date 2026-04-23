@@ -99,6 +99,12 @@ button, input, select, textarea {
 .btn-refresh:active { background-color: var(--bg-alt); }
 .btn-refresh:disabled { color: var(--dimmer); border-color: var(--border-dim); cursor: not-allowed; }
 
+#back-btn {
+  padding: 6px 12px;
+  font-size: 18px;
+  line-height: 1;
+}
+
 /* ------------------ Summary panel ------------------ */
 #summary-panel {
   display: flex;
