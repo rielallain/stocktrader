@@ -398,6 +398,7 @@ function showDetail(ticker) {
   state.selectedTicker = ticker;
   const s = state.stocks.find(x => x.ticker === ticker);
   if (!s) return;
+  _navPushModal('detail');
 
   document.getElementById('detail-ticker').textContent = s.ticker;
   document.getElementById('detail-company').textContent = s.company_name || '';
@@ -495,9 +496,11 @@ function showDetail(ticker) {
 }
 
 function hideDetail() {
+  const wasOpen = !document.getElementById('detail-panel').classList.contains('hidden');
   document.getElementById('detail-panel').classList.add('hidden');
   document.getElementById('detail-backdrop').classList.add('hidden');
   state.selectedTicker = null;
+  if (wasOpen) _navBack();
 }
 
 async function editStock(ticker) {
@@ -638,6 +641,7 @@ function openAlertModal(prefillTicker = null) {
   document.getElementById('alert-note').value = '';
   document.getElementById('alert-one-shot').checked = true;
   modal.classList.remove('hidden');
+  _navPushModal('alert');
 }
 
 function updateThresholdHint() {
@@ -678,6 +682,7 @@ async function confirmAlert() {
     await loadAlerts();
     renderAlerts(); renderSummary();
     document.getElementById('alert-modal').classList.add('hidden');
+    _navBack();
     toast('Alert created');
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -690,6 +695,7 @@ function openAddModal() {
   document.getElementById('add-validation-result').textContent = '';
   document.getElementById('add-validation-result').className = '';
   document.getElementById('add-modal').classList.remove('hidden');
+  _navPushModal('add');
 }
 
 async function validateAdd() {
@@ -736,6 +742,7 @@ async function confirmAdd() {
     await loadStocks();
     renderAll();
     document.getElementById('add-modal').classList.add('hidden');
+    _navBack();
     toast(`Added ${body.ticker}`);
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -768,13 +775,48 @@ async function refreshNow() {
 }
 
 // ---------- tabs ----------
+let _navPopping = false;
 function switchTab(name) {
+  if (!_navPopping && state.activeTab !== name) {
+    history.pushState({ nav: 'tab', name }, '');
+  }
   state.activeTab = name;
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + name));
 }
+
+// ---------- back-button / history integration ----------
+// Android's system back button should close the top-most modal, then fall
+// back to switching tabs toward 'portfolio'. Each UI layer pushes a history
+// entry when opened; popstate closes the layer.
+function _navPushModal(kind) {
+  if (!_navPopping) history.pushState({ nav: 'modal', kind }, '');
+}
+function _navBack() {
+  if (!_navPopping) history.back();
+}
+window.addEventListener('popstate', (e) => {
+  _navPopping = true;
+  try {
+    const detail = document.getElementById('detail-panel');
+    const alertM = document.getElementById('alert-modal');
+    const addM   = document.getElementById('add-modal');
+    if (detail && !detail.classList.contains('hidden')) {
+      hideDetail();
+    } else if (alertM && !alertM.classList.contains('hidden')) {
+      alertM.classList.add('hidden');
+    } else if (addM && !addM.classList.contains('hidden')) {
+      addM.classList.add('hidden');
+    } else {
+      const targetTab = (e.state && e.state.nav === 'tab' && e.state.name) || 'portfolio';
+      if (state.activeTab !== targetTab) switchTab(targetTab);
+    }
+  } finally {
+    _navPopping = false;
+  }
+});
 
 // ---------- toast ----------
 let toastTimer = null;
@@ -815,15 +857,19 @@ async function init() {
 
   // Add ticker
   document.getElementById('add-ticker-btn').addEventListener('click', openAddModal);
-  document.getElementById('add-cancel').onclick = () =>
+  document.getElementById('add-cancel').onclick = () => {
     document.getElementById('add-modal').classList.add('hidden');
+    _navBack();
+  };
   document.getElementById('add-confirm').onclick = confirmAdd;
   document.getElementById('add-validate-btn').onclick = validateAdd;
 
   // Alert modal
   document.getElementById('add-alert-btn').addEventListener('click', () => openAlertModal());
-  document.getElementById('alert-cancel').onclick = () =>
+  document.getElementById('alert-cancel').onclick = () => {
     document.getElementById('alert-modal').classList.add('hidden');
+    _navBack();
+  };
   document.getElementById('alert-confirm').onclick = confirmAlert;
   document.getElementById('alert-rule-type').addEventListener('change', updateThresholdHint);
 
