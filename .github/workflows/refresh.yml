@@ -1,24 +1,22 @@
 name: Refresh market data
 
-# Runs yfinance from a GitHub-hosted runner (different IP space than Render,
-# so Yahoo actually serves historical data instead of rate-limiting) and
-# POSTs results back to the web app. Used to keep RSI / 200-day SMA and
-# other historical-derived fields populated.
+# Fetches daily closes from Twelve Data (Yahoo blocks cloud IPs, and Stooq
+# now requires a captcha-gated API key), computes RSI and SMA-200, and POSTs
+# back to the web app. Free tier is 8 req/min and 800 req/day, so we run
+# every 2 hours during US market hours on weekdays — 5 runs × ~67 tickers
+# = ~335 calls/day, well under the cap. Each run takes ~9 min due to the
+# 8-sec per-ticker pacing needed to respect the 8/min limit.
 
 on:
-  # Every 30 minutes during (and around) US market hours, weekdays only.
-  # 13:00-21:00 UTC covers 9:00 AM - 5:00 PM ET in both EST and EDT.
-  # At ~2-3 min per run × 17 runs/day × 22 weekdays ≈ 1100 min/month,
-  # which fits comfortably under the 2000-min free tier.
   schedule:
-    - cron: '*/30 13-21 * * 1-5'
+    - cron: '0 13-21/2 * * 1-5'
   # Allow manual triggering from the Actions tab
   workflow_dispatch: {}
 
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -34,4 +32,5 @@ jobs:
         env:
           APP_URL: ${{ vars.APP_URL }}
           BULK_REFRESH_SECRET: ${{ secrets.BULK_REFRESH_SECRET }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
         run: python scripts/refresh_via_github.py

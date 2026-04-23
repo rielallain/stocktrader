@@ -1,17 +1,17 @@
 """
 Refresh market data from GitHub Actions and POST it back to the web app.
 
-Why this exists: Yahoo Finance now blocks both Render's IPs AND GitHub runner
-IPs (returns 429 / empty history). So we switched to Stooq for historical
-closes — it's free, no auth, no rate limits, and serves daily OHLC as CSV.
-We compute RSI and SMA-200 from that, and let the web app keep whatever
-current_price / market_cap / extended_price it already has (via COALESCE
-on the server side).
+Why this exists: Yahoo now blocks cloud IPs (Render + GitHub runners) and
+Stooq added a captcha-gated API key. So we use Twelve Data: free tier,
+800 req/day, 8 req/min. We fetch daily closes, compute RSI and SMA-200,
+and POST back. The server uses COALESCE so this only overwrites the two
+fields we send — current_price / market_cap / extended_price etc. stay
+whatever the Render-side Finnhub path set.
 
 Usage (from .github/workflows/refresh.yml):
-    APP_URL=https://... BULK_REFRESH_SECRET=... python scripts/refresh_via_github.py
+    APP_URL=https://... BULK_REFRESH_SECRET=... TWELVEDATA_API_KEY=... \
+      python scripts/refresh_via_github.py
 """
-import io
 import os
 import sys
 import time
@@ -22,7 +22,9 @@ import requests
 
 APP_URL = os.environ["APP_URL"].rstrip("/")
 SECRET = os.environ["BULK_REFRESH_SECRET"]
-DELAY_SEC = float(os.environ.get("DELAY_SEC", "0.4"))
+TD_KEY = os.environ["TWELVEDATA_API_KEY"]
+# Twelve Data free tier is 8 req/min. 60/8 = 7.5s floor; 8s gives headroom.
+DELAY_SEC = float(os.environ.get("DELAY_SEC", "8"))
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -48,59 +50,55 @@ def _compute_sma_pct(closes: pd.Series, window: int = 200) -> Optional[float]:
     return float((closes.iloc[-1] - sma) / sma * 100)
 
 
-def _stooq_symbol(ticker: str) -> Optional[str]:
-    """Map our ticker format to Stooq's. Returns None for tickers we can't map."""
+def _td_symbol(ticker: str) -> str:
+    """Map our ticker format to Twelve Data's."""
     t = ticker.strip().upper()
-    # Crypto: BTC-USD -> btcusd, ETH-USD -> ethusd
+    # Crypto: BTC-USD -> BTC/USD
     if t.endswith("-USD"):
-        return t.replace("-", "").lower()
-    # Toronto: FOO.TO -> foo.ca (Stooq uses .ca for TSX)
-    if t.endswith(".TO"):
-        return t[:-3].lower() + ".ca"
-    # TSX Venture: FOO.V -> foo.v (Stooq uses .v)
-    if t.endswith(".V"):
-        return t[:-2].lower() + ".v"
-    # German: AIXA.DE -> aixa.de (same suffix)
-    if t.endswith(".DE"):
-        return t.lower()
-    # US: plain ticker -> ticker.us
-    if "." not in t and "-" not in t:
-        return t.lower() + ".us"
-    return None
+        return t.replace("-USD", "/USD")
+    # Twelve Data accepts FOO.TO, FOO.V, AIXA.DE as-is
+    return t
 
 
 def fetch_one(ticker: str) -> Optional[dict]:
-    sym = _stooq_symbol(ticker)
-    if sym is None:
-        print(f"[{ticker}] no Stooq mapping")
-        return None
-    url = f"https://stooq.com/q/d/l/?s={sym}&i=d"
+    sym = _td_symbol(ticker)
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": sym,
+        "interval": "1day",
+        "outputsize": 250,  # ~1 year of trading days
+        "apikey": TD_KEY,
+        "order": "ASC",
+    }
     try:
-        r = requests.get(url, timeout=20)
+        r = requests.get(url, params=params, timeout=20)
         if r.status_code != 200:
-            print(f"[{ticker}] stooq HTTP {r.status_code}")
+            print(f"[{ticker}] HTTP {r.status_code}")
             return None
-        body = r.text.strip()
-        if not body or body.lower().startswith("no data") or "," not in body:
-            print(f"[{ticker}] stooq no data ({sym})")
+        data = r.json()
+        if data.get("status") == "error":
+            print(f"[{ticker}] td error: {data.get('message', '')[:120]}")
             return None
-        df = pd.read_csv(io.StringIO(body))
-        if "Close" not in df.columns or df.empty:
-            print(f"[{ticker}] stooq unexpected format")
+        values = data.get("values")
+        if not values:
+            print(f"[{ticker}] no values returned")
             return None
-        closes = df["Close"].dropna()
+        df = pd.DataFrame(values)
+        closes = pd.to_numeric(df["close"], errors="coerce").dropna()
         if closes.empty:
             return None
-        # Stooq returns data sorted ascending by date
         payload = {
             "ticker": ticker,
             "rsi": _compute_rsi(closes),
             "sma_200_pct": _compute_sma_pct(closes),
         }
-        # Only include 52w high/low if we have enough history
-        if len(df) >= 200:
-            payload["high_52w"] = float(df["High"].tail(252).max())
-            payload["low_52w"] = float(df["Low"].tail(252).min())
+        if "high" in df.columns and "low" in df.columns and len(df) >= 200:
+            highs = pd.to_numeric(df["high"], errors="coerce").dropna()
+            lows = pd.to_numeric(df["low"], errors="coerce").dropna()
+            if not highs.empty:
+                payload["high_52w"] = float(highs.max())
+            if not lows.empty:
+                payload["low_52w"] = float(lows.min())
         return payload
     except Exception as e:
         print(f"[{ticker}] fetch_one failed: {e}")
@@ -112,18 +110,20 @@ def main() -> int:
     r = requests.get(f"{APP_URL}/api/stocks", timeout=30)
     r.raise_for_status()
     tickers = sorted({s["ticker"] for s in r.json()})
-    print(f"Fetching {len(tickers)} tickers from Stooq...")
+    print(f"Fetching {len(tickers)} tickers from Twelve Data...")
 
-    # 2. Fetch each one (Stooq has no meaningful rate limit for this volume)
+    # 2. Fetch each one, respecting the 8-req/min free-tier cap
     results: list[dict] = []
     failed: list[str] = []
-    for ticker in tickers:
+    for i, ticker in enumerate(tickers):
         data = fetch_one(ticker)
         if data is not None and data.get("rsi") is not None:
             results.append(data)
         else:
             failed.append(ticker)
-        time.sleep(DELAY_SEC)
+        # Sleep between requests (skip after the last one)
+        if i < len(tickers) - 1:
+            time.sleep(DELAY_SEC)
 
     print(f"Fetched OK: {len(results)}/{len(tickers)}")
     if failed:
