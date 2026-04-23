@@ -270,7 +270,7 @@ button, input, select, textarea {
 
 /* 52W range bar */
 .range-cell {
-  min-width: 180px;
+  min-width: 260px;
   padding: 8px 10px;
 }
 .range-bar-wrap {
