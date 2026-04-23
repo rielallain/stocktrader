@@ -347,14 +347,23 @@ button, input, select, textarea {
 #detail-company { color: var(--muted); font-size: 12px; margin-top: 2px; }
 
 #detail-close {
-  background: transparent;
-  color: var(--muted);
+  position: absolute;
+  right: 20px;
+  /* Sit above the iOS home-indicator / safe-area */
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  background-color: var(--bg-alt);
+  color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  width: 28px; height: 28px;
+  font-size: 22px;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  z-index: 10;
 }
-#detail-close:hover { background-color: var(--red); color: white; border-color: var(--red); }
+#detail-close:hover  { background-color: var(--red); color: white; border-color: var(--red); }
+#detail-close:active { transform: translateY(1px); }
 
 #detail-content { flex: 1; overflow-y: auto; padding: 16px; }
 
