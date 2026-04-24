@@ -137,8 +137,12 @@ def _fetch_one_finnhub(ticker: str) -> Optional[Dict]:
 
         current = float(quote["c"])  # current price
         previous = float(quote.get("pc") or current)  # previous close
-        high_52w = float(quote["h"]) if quote.get("h") else None  # day high actually
-        low_52w = float(quote["l"]) if quote.get("l") else None   # day low actually
+        # NOTE: quote["h"] / quote["l"] are the DAY high/low, not 52-week.
+        # We only populate high_52w / low_52w from /stock/metric below; if
+        # that call fails or the ticker isn't covered, these stay None rather
+        # than poisoning the DB with a day-range masquerading as 52-week.
+        high_52w = None
+        low_52w = None
 
         # /stock/profile2 for company name + market cap
         company_name = None
@@ -202,8 +206,12 @@ def fetch_one(ticker: str) -> Optional[Dict]:
     try:
         t = yf.Ticker(ticker, session=_yf_session) if _yf_session else yf.Ticker(ticker)
 
-        # 1 year of daily closes — enough for 200-day SMA and 52W range
-        hist = t.history(period="1y", auto_adjust=False)
+        # 1 year of daily closes — enough for 200-day SMA and 52W range.
+        # auto_adjust=True back-adjusts Open/High/Low/Close for splits and
+        # dividends, so a recent split (e.g. NVDA 10:1) doesn't make the
+        # 52W high look like $1,200 against a $120 current price. Also
+        # keeps RSI/SMA honest over windows that straddle a split.
+        hist = t.history(period="1y", auto_adjust=True)
         if hist.empty:
             log.warning(f"yfinance: no history for {ticker}")
             # Try Finnhub before giving up

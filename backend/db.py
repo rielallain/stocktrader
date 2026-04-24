@@ -185,6 +185,28 @@ def init_schema():
                 if "duplicate column" not in str(e).lower():
                     raise
 
+        # Key-value table for one-off data migrations we only want to run once.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        # One-time clear of high_52w/low_52w. Prior versions poisoned these
+        # with (a) day-range from Finnhub's /quote when /stock/metric was
+        # unavailable and (b) split-unadjusted raw highs/lows from yfinance.
+        # The fetcher code is now fixed, but COALESCE in the UPSERT means
+        # bad values never get overwritten — so we wipe them once here and
+        # let the next refresh repopulate cleanly.
+        cur.execute("SELECT 1 FROM schema_meta WHERE key = 'cleared_52w_20260424'")
+        if not cur.fetchone():
+            cur.execute("UPDATE stocks SET high_52w = NULL, low_52w = NULL")
+            cur.execute(
+                "INSERT INTO schema_meta (key, value) VALUES ('cleared_52w_20260424', '1')"
+            )
+            print("[db] Migration: cleared stale high_52w / low_52w values")
+
         print("[db] Schema initialized")
 
 
