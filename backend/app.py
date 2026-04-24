@@ -152,10 +152,29 @@ def api_add_stock():
     if target_list not in ("portfolio", "watchlist", "both"):
         return jsonify({"error": "Invalid target_list"}), 400
 
-    # Validate with yfinance before adding
+    force = bool(data.get("force"))
+    # Validate with yfinance before adding (unless caller opted out via force=true
+    # — needed for tickers that no free data source on Render's IPs can validate,
+    # e.g. .DE tickers: Yahoo blocks us and Finnhub free tier doesn't cover XETR)
     snapshot = validate_ticker(ticker)
     if snapshot is None:
-        return jsonify({"error": f"Could not fetch data for '{ticker}'. Check the symbol."}), 400
+        if not force:
+            return jsonify({"error": f"Could not fetch data for '{ticker}'. Check the symbol."}), 400
+        # Force-add: insert with placeholder company name and null metrics; the
+        # next bulk-upsert from GitHub Actions / Finnhub refresh will fill them
+        # in when it can.
+        snapshot = {
+            "company_name": ticker,
+            "current_price": None,
+            "fetched_at": None,
+            "previous_close": None,
+            "volume": None,
+            "market_cap": None,
+            "high_52w": None,
+            "low_52w": None,
+            "rsi": None,
+            "sma_200_pct": None,
+        }
 
     is_portfolio = 1 if target_list in ("portfolio", "both") else 0
     is_watchlist = 1 if target_list in ("watchlist", "both") else 0

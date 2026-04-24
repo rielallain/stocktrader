@@ -717,8 +717,10 @@ async function validateAdd() {
   document.getElementById('add-ticker-input').value = ticker;
 
   const result = document.getElementById('add-validation-result');
+  const forceBtn = document.getElementById('add-force-btn');
   result.textContent = 'Checking...';
   result.className = '';
+  forceBtn.classList.add('hidden');
   try {
     const v = await API.get(`/api/validate/${ticker}`);
     if (v.valid) {
@@ -727,11 +729,35 @@ async function validateAdd() {
     } else {
       result.textContent = `⚠ Could not find ${ticker}`;
       result.className = 'err';
+      forceBtn.classList.remove('hidden');
     }
   } catch (e) {
     result.textContent = '⚠ ' + e.message;
     result.className = 'err';
+    forceBtn.classList.remove('hidden');
   }
+}
+
+async function forceAdd() {
+  const ticker = document.getElementById('add-ticker-input').value.trim().toUpperCase();
+  if (!ticker) { toast('Ticker required', 'err'); return; }
+  const body = {
+    ticker,
+    endorsement_price: parseFloat(document.getElementById('add-endorsement').value) || 0,
+    target_price: parseFloat(document.getElementById('add-target').value) || 0,
+    target_list: document.getElementById('add-target-list').value,
+    force: true,
+  };
+  try {
+    await API.post('/api/stocks', body);
+    await loadStocks();
+    renderAll();
+    document.getElementById('add-modal').classList.add('hidden');
+    document.getElementById('add-force-btn').classList.add('hidden');
+    updateBackBtn();
+    _navBack();
+    toast(`Added ${body.ticker} (unvalidated)`);
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 async function confirmAdd() {
@@ -888,6 +914,7 @@ async function init() {
   };
   document.getElementById('add-confirm').onclick = confirmAdd;
   document.getElementById('add-validate-btn').onclick = validateAdd;
+  document.getElementById('add-force-btn').onclick = forceAdd;
 
   // Alert modal
   document.getElementById('add-alert-btn').addEventListener('click', () => openAlertModal());
