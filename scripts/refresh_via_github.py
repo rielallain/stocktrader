@@ -23,8 +23,15 @@ import requests
 APP_URL = os.environ["APP_URL"].rstrip("/")
 SECRET = os.environ["BULK_REFRESH_SECRET"]
 TD_KEY = os.environ["TWELVEDATA_API_KEY"]
-# Twelve Data free tier is 8 req/min. 60/8 = 7.5s floor; 8s gives headroom.
-DELAY_SEC = float(os.environ.get("DELAY_SEC", "8"))
+# Twelve Data free tier is 8 req/min. An 8s delay puts us right at the
+# 7.5 req/min boundary with zero jitter margin — we were consistently
+# losing the alphabetically-late tickers to 429s. 10s = 6 req/min gives
+# comfortable headroom, and 65 tickers × 10s = 650s = 10.8 min still
+# fits inside the 15-min workflow timeout.
+DELAY_SEC = float(os.environ.get("DELAY_SEC", "10"))
+# If we still hit a 429, back off this long and try once more before
+# giving up on the ticker.
+RETRY_COOLDOWN_SEC = float(os.environ.get("RETRY_COOLDOWN_SEC", "30"))
 
 
 def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
@@ -72,6 +79,12 @@ def fetch_one(ticker: str) -> Optional[dict]:
     }
     try:
         r = requests.get(url, params=params, timeout=20)
+        # 429 = rate-limited. Back off once and try again so we don't silently
+        # drop tickers when our 10s pacing drifts into the 8/min boundary.
+        if r.status_code == 429:
+            print(f"[{ticker}] 429; cooling {RETRY_COOLDOWN_SEC}s then retrying")
+            time.sleep(RETRY_COOLDOWN_SEC)
+            r = requests.get(url, params=params, timeout=20)
         if r.status_code != 200:
             print(f"[{ticker}] HTTP {r.status_code}")
             return None
