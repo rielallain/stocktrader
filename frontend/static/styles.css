@@ -231,6 +231,15 @@ button, input, select, textarea {
 .stock-table tbody tr:nth-child(even) { background-color: var(--bg-row); }
 .stock-table tbody tr:hover           { background-color: var(--bg-hover); }
 .stock-table tbody tr.selected        { background-color: var(--bg-select); }
+/* Long-press / right-click multi-select highlight. Stronger than .selected
+ * because it represents an explicit user pick, not just the row whose detail
+ * panel is currently open. */
+.stock-table tbody tr.multi-selected {
+  background-color: rgba(88, 166, 255, 0.18);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+.stock-table tbody tr.multi-selected:nth-child(even) { background-color: rgba(88, 166, 255, 0.18); }
+.stock-table tbody tr.multi-selected td:first-child  { background-color: rgba(28, 50, 90, 0.95); }
 
 /* ------ Sticky ticker column ------
  * First column (ticker) stays pinned to the left edge during horizontal
@@ -268,27 +277,48 @@ button, input, select, textarea {
 .loss        { color: var(--red);   font-weight: 600; }
 .neutral     { color: var(--muted); }
 .dim         { color: var(--dimmer); }
-.ext-pre     { color: var(--blue) !important; }
-.ext-post    { color: var(--purple) !important; }
+/* Pre-market / after-hours pill next to the regular price. The colored
+ * background makes it unmistakable that this is an off-hours quote. */
+.ext-pre, .ext-post {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  letter-spacing: 0.3px;
+}
+.ext-pre  { color: var(--blue)   !important; background-color: rgba(88, 166, 255, 0.15);  border: 1px solid rgba(88, 166, 255, 0.3); }
+.ext-post { color: var(--purple) !important; background-color: rgba(188, 140, 255, 0.15); border: 1px solid rgba(188, 140, 255, 0.3); }
+
+/* 🔔 badge next to the ticker when an active alert rule exists for it. */
+.alert-badge {
+  margin-left: 4px;
+  font-size: 11px;
+  filter: saturate(1.2);
+  cursor: help;
+}
 .rsi-over    { color: var(--red); font-weight: 700; }
 .rsi-under   { color: var(--green); font-weight: 700; }
 .stale-dot   { color: var(--yellow); font-weight: 700; margin-left: 4px; cursor: help; }
 
-/* 52W range bar */
+/* 52W range bar — wider track so the marker has more room to breathe and
+ * the high/low labels are easier to read. */
 .range-cell {
-  min-width: 260px;
+  min-width: 340px;
   padding: 8px 10px;
 }
 .range-bar-wrap {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10px; color: var(--dimmer);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--dimmer);
+  min-width: 320px;
 }
 .range-bar-track {
   flex: 1;
   position: relative;
-  height: 6px;
+  height: 8px;
   background-color: var(--border-dim);
-  border-radius: 3px;
+  border-radius: 4px;
   overflow: visible;
 }
 .range-bar-fill {
@@ -301,7 +331,7 @@ button, input, select, textarea {
 .range-bar-fill.bad  { background-color: var(--red); }
 .range-bar-marker {
   position: absolute; top: -2px;
-  width: 2px; height: 10px;
+  width: 2px; height: 12px;
   background-color: var(--text);
 }
 
@@ -356,8 +386,16 @@ button, input, select, textarea {
   background-color: var(--bg-alt);
   color: var(--text);
   border: 1px solid var(--border);
-  font-size: 22px;
-  font-weight: 700;
+  /* Use flex centering so the ✕ glyph sits visually in the middle of the
+   * circle. Without this the default text baseline + button padding pushes
+   * the X up and to the left of true center. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   z-index: 10;
@@ -577,6 +615,55 @@ button, input, select, textarea {
     width: 100%;
     border-left: none;
   }
+}
+
+/* ------------------ Multi-select bar ------------------ */
+/* Floating action bar that appears at the bottom of the viewport while the
+ * user has tickers selected via long-press. Sits above the iOS home
+ * indicator and is wider than the toast (separate id, no overlap). */
+#selection-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  background-color: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+  z-index: 1500;
+  max-width: calc(100vw - 24px);
+}
+#selection-bar .sel-count {
+  color: var(--blue);
+  font-weight: 700;
+  font-size: 13px;
+  margin-right: 4px;
+}
+#selection-bar .sel-btn {
+  background-color: #21262D;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+#selection-bar .sel-btn:hover  { background-color: var(--blue-dark); border-color: var(--blue-dark); color: white; }
+#selection-bar .sel-btn:active { transform: translateY(1px); }
+#selection-bar .sel-btn.danger { color: var(--red); border-color: rgba(248, 81, 73, 0.4); }
+#selection-bar .sel-btn.danger:hover { background-color: var(--red); border-color: var(--red); color: white; }
+
+/* While selection mode is active, suppress hover styling on rows so the
+ * multi-selected highlight is the dominant visual. */
+body.selection-mode .stock-table tbody tr:hover {
+  background-color: inherit;
 }
 
 /* ------------------ Scrollbars ------------------ */

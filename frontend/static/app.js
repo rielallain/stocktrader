@@ -29,7 +29,13 @@ const state = {
   sortDir: 'asc',
   selectedTicker: null,
   marketStatus: 'closed',
+  // Multi-select: long-press a row to enter selection mode; subsequent
+  // taps on rows toggle membership; an action bar provides bulk move/remove.
+  selectionMode: false,
+  selectedTickers: new Set(),
 };
+
+const LONG_PRESS_MS = 500;
 
 // Column definitions — mirror the desktop app's 16 columns
 const COLUMNS = [
@@ -87,6 +93,13 @@ function signed(n, decimals = 2, suffix = '') {
 function gainLossClass(n) {
   if (n === null || n === undefined || isNaN(n)) return 'neutral';
   return n >= 0 ? 'gain' : 'loss';
+}
+
+// True if there's at least one *active* alert rule for this ticker — used
+// to show a 🔔 badge next to the symbol so you can see at a glance which
+// rows are armed.
+function tickerHasActiveAlert(ticker) {
+  return state.alerts.some(a => a.active && a.ticker === ticker);
 }
 
 // ---------- table rendering ----------
@@ -174,7 +187,8 @@ function renderTable(which) {
 function renderRow(s) {
   const tr = document.createElement('tr');
   tr.dataset.ticker = s.ticker;
-  tr.addEventListener('click', () => showDetail(s.ticker));
+  if (state.selectedTickers.has(s.ticker)) tr.classList.add('multi-selected');
+  attachRowHandlers(tr, s.ticker);
 
   for (const col of COLUMNS) {
     const td = document.createElement('td');
@@ -186,10 +200,73 @@ function renderRow(s) {
   return tr;
 }
 
+// Pointer handlers that distinguish a tap (open detail / toggle selection)
+// from a long-press (enter selection mode). Movement >8px during the press
+// cancels the long-press timer so vertical scroll gestures don't accidentally
+// trigger it.
+function attachRowHandlers(tr, ticker) {
+  let lpTimer = null;
+  let suppressClick = false;
+  let startX = 0, startY = 0;
+
+  const cancelTimer = () => {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  };
+
+  tr.addEventListener('pointerdown', (e) => {
+    startX = e.clientX; startY = e.clientY;
+    suppressClick = false;
+    cancelTimer();
+    lpTimer = setTimeout(() => {
+      lpTimer = null;
+      suppressClick = true;
+      // Haptic nudge on devices that support it
+      if (navigator.vibrate) navigator.vibrate(30);
+      if (!state.selectionMode) enterSelectionMode();
+      toggleSelection(ticker);
+    }, LONG_PRESS_MS);
+  });
+
+  tr.addEventListener('pointermove', (e) => {
+    if (lpTimer && (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8)) {
+      cancelTimer();
+    }
+  });
+  tr.addEventListener('pointerup', cancelTimer);
+  tr.addEventListener('pointercancel', cancelTimer);
+  tr.addEventListener('pointerleave', cancelTimer);
+
+  tr.addEventListener('click', (e) => {
+    if (suppressClick) {
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (state.selectionMode) {
+      toggleSelection(ticker);
+    } else {
+      showDetail(ticker);
+    }
+  });
+
+  // Right-click on desktop also enters selection mode (mouse equivalent
+  // of long-press).
+  tr.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!state.selectionMode) enterSelectionMode();
+    toggleSelection(ticker);
+  });
+}
+
 function cellContent(s, key) {
   switch (key) {
-    case 'ticker':
-      return `<span class="ticker-cell">${s.ticker}</span>`;
+    case 'ticker': {
+      const alertBadge = tickerHasActiveAlert(s.ticker)
+        ? '<span class="alert-badge" title="Has active alert">🔔</span>'
+        : '';
+      return `<span class="ticker-cell">${s.ticker}</span>${alertBadge}`;
+    }
 
     case 'company_name':
       return (s.company_name || s.ticker).replace(/</g, '&lt;');
@@ -198,15 +275,17 @@ function cellContent(s, key) {
       const priceStr = fmtNum(s.last_price, { prefix: '$' });
       if (s.last_price == null) return priceStr;
 
-      // Extended-hours price, colored blue (pre) / purple (post). Shown as a
-      // small delta vs regular close so you can see the move at a glance.
+      // Extended-hours price as a prominent inline tag — pre-market in blue,
+      // after-hours in purple. Shows the absolute price (not just the delta)
+      // so it's clear at a glance what the latest off-hours quote is.
       let extHtml = '';
       if (s.extended_price != null && s.extended_session) {
         const diff = s.extended_price - s.last_price;
         const cls = s.extended_session === 'pre' ? 'ext-pre' : 'ext-post';
-        const label = s.extended_session === 'pre' ? 'pre-market' : 'after-hours';
+        const label = s.extended_session === 'pre' ? 'Pre-market' : 'After-hours';
+        const tag = s.extended_session === 'pre' ? 'Pre' : 'AH';
         const sign = diff >= 0 ? '+' : '';
-        extHtml = ` <span class="${cls}" title="${label}: $${s.extended_price.toFixed(2)}">${sign}${diff.toFixed(2)}</span>`;
+        extHtml = ` <span class="${cls}" title="${label}: $${s.extended_price.toFixed(2)} (${sign}${diff.toFixed(2)})">${tag} $${s.extended_price.toFixed(2)}</span>`;
       }
 
       // Stale indicator (yellow dot) if price wasn't refreshed today.
@@ -560,6 +639,104 @@ async function removeStock(ticker) {
     hideDetail();
     toast(`Removed ${ticker}`);
   } catch (e) { toast(e.message, 'err'); }
+}
+
+// ---------- multi-select ----------
+function enterSelectionMode() {
+  state.selectionMode = true;
+  document.body.classList.add('selection-mode');
+  renderSelectionBar();
+}
+
+function exitSelectionMode() {
+  state.selectionMode = false;
+  state.selectedTickers.clear();
+  document.body.classList.remove('selection-mode');
+  document.querySelector('#selection-bar')?.remove();
+  // Re-render to drop the .multi-selected class on rows
+  renderTable('portfolio');
+  renderTable('watchlist');
+}
+
+function toggleSelection(ticker) {
+  if (state.selectedTickers.has(ticker)) {
+    state.selectedTickers.delete(ticker);
+  } else {
+    state.selectedTickers.add(ticker);
+  }
+  // Update the row's visual state without a full re-render.
+  document.querySelectorAll(`tr[data-ticker="${ticker}"]`).forEach(tr =>
+    tr.classList.toggle('multi-selected', state.selectedTickers.has(ticker)));
+  if (state.selectedTickers.size === 0) {
+    exitSelectionMode();
+    return;
+  }
+  renderSelectionBar();
+}
+
+function renderSelectionBar() {
+  let bar = document.getElementById('selection-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'selection-bar';
+    document.body.appendChild(bar);
+  }
+  const n = state.selectedTickers.size;
+  bar.innerHTML = `
+    <span class="sel-count">${n} selected</span>
+    <button class="sel-btn" data-act="portfolio">→ Portfolio</button>
+    <button class="sel-btn" data-act="watchlist">→ Watchlist</button>
+    <button class="sel-btn" data-act="both">→ Both</button>
+    <button class="sel-btn danger" data-act="remove">Remove</button>
+    <button class="sel-btn" data-act="cancel">Cancel</button>
+  `;
+  bar.querySelector('[data-act="portfolio"]').onclick = () => bulkMove('portfolio');
+  bar.querySelector('[data-act="watchlist"]').onclick = () => bulkMove('watchlist');
+  bar.querySelector('[data-act="both"]').onclick      = () => bulkMove('both');
+  bar.querySelector('[data-act="remove"]').onclick    = bulkRemove;
+  bar.querySelector('[data-act="cancel"]').onclick    = exitSelectionMode;
+}
+
+async function bulkMove(target) {
+  const tickers = Array.from(state.selectedTickers);
+  if (!tickers.length) return;
+  let ok = 0, fail = 0;
+  for (const t of tickers) {
+    try {
+      await API.post(`/api/stocks/${t}/move`, { target });
+      ok++;
+    } catch (e) {
+      console.warn(`bulk move ${t}:`, e);
+      fail++;
+    }
+  }
+  await loadStocks();
+  exitSelectionMode();
+  renderAll();
+  toast(fail ? `Moved ${ok}/${tickers.length} (${fail} failed)` : `Moved ${ok} to ${target}`,
+        fail ? 'err' : 'ok');
+}
+
+async function bulkRemove() {
+  const tickers = Array.from(state.selectedTickers);
+  if (!tickers.length) return;
+  const plural = tickers.length === 1 ? '' : 's';
+  if (!confirm(`Remove ${tickers.length} ticker${plural}? This also deletes any alerts for ${tickers.length === 1 ? 'it' : 'them'}.`)) return;
+  let ok = 0, fail = 0;
+  for (const t of tickers) {
+    try {
+      await API.del(`/api/stocks/${t}`);
+      ok++;
+    } catch (e) {
+      console.warn(`bulk del ${t}:`, e);
+      fail++;
+    }
+  }
+  await Promise.all([loadStocks(), loadAlerts()]);
+  exitSelectionMode();
+  renderAll();
+  toast(fail ? `Removed ${ok}/${tickers.length} (${fail} failed)` : `Removed ${ok}`,
+        fail ? 'err' : 'ok');
 }
 
 // ---------- alerts UI ----------
