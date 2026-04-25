@@ -302,21 +302,23 @@ button, input, select, textarea {
 .rsi-under   { color: var(--green); font-weight: 700; }
 .stale-dot   { color: var(--yellow); font-weight: 700; margin-left: 4px; cursor: help; }
 
-/* 52W range bar — wider track so the marker has more room to breathe and
- * the high/low labels are easier to read. */
+/* 52W range bar — compact column so the rest of the row (especially the
+ * current price) is visible without horizontal scrolling. The current
+ * price floats above the marker so the bar still tells you everything. */
 .range-cell {
-  min-width: 340px;
+  min-width: 180px;
   padding: 8px 10px;
 }
 .range-bar-wrap {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   font-size: 11px; color: var(--dimmer);
-  min-width: 320px;
+  min-width: 160px;
 }
 .range-bar-track {
   flex: 1;
   position: relative;
   height: 8px;
+  margin-top: 14px;  /* room for the floating current-price label */
   background-color: var(--border-dim);
   border-radius: 4px;
   overflow: visible;
@@ -333,6 +335,22 @@ button, input, select, textarea {
   position: absolute; top: -2px;
   width: 2px; height: 12px;
   background-color: var(--text);
+}
+.range-bar-current {
+  position: absolute;
+  bottom: 100%;
+  margin-bottom: 3px;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+  background-color: var(--bg-alt);
+  border: 1px solid var(--border-dim);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.2;
 }
 
 .empty-state {

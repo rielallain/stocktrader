@@ -380,10 +380,18 @@ function renderRangeBar(s) {
   else if (ratio <= 0.4) fillClass = 'bad';
   const lo = s.low_52w >= 100 ? `$${Math.round(s.low_52w)}` : `$${s.low_52w.toFixed(2)}`;
   const hi = s.high_52w >= 100 ? `$${Math.round(s.high_52w)}` : `$${s.high_52w.toFixed(2)}`;
+  const cur = s.last_price >= 100 ? `$${Math.round(s.last_price)}` : `$${s.last_price.toFixed(2)}`;
+  // Clamp the floating current-price label to the bar edges when the marker
+  // is near 0% or 100%, so the text doesn't overflow the track.
+  let curStyle;
+  if (ratio < 0.15) curStyle = 'left: 0; transform: none;';
+  else if (ratio > 0.85) curStyle = 'right: 0; left: auto; transform: none;';
+  else curStyle = `left: ${ratio * 100}%;`;
   return `
     <div class="range-bar-wrap">
       <span>${lo}</span>
       <div class="range-bar-track">
+        <div class="range-bar-current" style="${curStyle}">${cur}</div>
         <div class="range-bar-fill ${fillClass}" style="width: ${ratio * 100}%"></div>
         <div class="range-bar-marker" style="left: ${ratio * 100}%"></div>
       </div>
