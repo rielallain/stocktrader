@@ -51,7 +51,7 @@ const COLUMNS = [
   { key: 'percent_change',     label: '% P/L',       cls: 'num', mobile: true  },
   { key: 'volume',             label: 'Volume',      cls: 'num', mobile: false },
   { key: 'market_cap',         label: 'Mkt Cap',     cls: 'num', mobile: false },
-  { key: 'range_52w',          label: '52W Range',   cls: '',    mobile: false, noSort: false },
+  { key: 'range_52w',          label: '52W Range',   cls: 'range-cell', mobile: false, noSort: false },
   { key: 'rsi',                label: 'RSI',         cls: 'num', mobile: false },
   { key: 'sma_200_pct',        label: '% vs SMA200', cls: 'num', mobile: false },
 ];
