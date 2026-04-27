@@ -3,7 +3,7 @@
 // is waking up from cold sleep on Render's free tier. API calls always go
 // network-first.
 
-const VERSION = 'v9';
+const VERSION = 'v10';
 const SHELL_CACHE = `stocktracker-shell-${VERSION}`;
 const SHELL_ASSETS = [
   '/',

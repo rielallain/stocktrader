@@ -881,11 +881,36 @@ function openAddModal() {
   document.getElementById('add-ticker-input').value = '';
   document.getElementById('add-endorsement').value = '';
   document.getElementById('add-target').value = '';
+  document.getElementById('add-alert-price').value = '';
+  document.getElementById('add-alert-direction').value = 'price_above';
   document.getElementById('add-validation-result').textContent = '';
   document.getElementById('add-validation-result').className = '';
   document.getElementById('add-modal').classList.remove('hidden');
   updateBackBtn();
   _navPushModal('add');
+}
+
+// If the user filled in "Alert price" while adding the ticker, fire-and-create
+// a one-shot alert in the chosen direction. We don't block adding the stock if
+// the alert POST fails — just toast the error and move on.
+async function _maybeCreateAlertFromAddModal(ticker) {
+  const raw = document.getElementById('add-alert-price').value;
+  const price = parseFloat(raw);
+  if (!raw || isNaN(price) || price <= 0) return;
+  const rule_type = document.getElementById('add-alert-direction').value;
+  try {
+    await API.post('/api/alerts', {
+      ticker,
+      rule_type,
+      threshold: price,
+      one_shot: true,
+      note: null,
+    });
+    await loadAlerts();
+    renderSummary();
+  } catch (e) {
+    toast(`Alert not created: ${e.message}`, 'err');
+  }
 }
 
 async function validateAdd() {
@@ -935,6 +960,7 @@ async function forceAdd() {
   };
   try {
     await API.post('/api/stocks', body);
+    await _maybeCreateAlertFromAddModal(body.ticker);
     await loadStocks();
     renderAll();
     document.getElementById('add-modal').classList.add('hidden');
@@ -955,6 +981,7 @@ async function confirmAdd() {
   if (!body.ticker) { toast('Ticker required', 'err'); return; }
   try {
     await API.post('/api/stocks', body);
+    await _maybeCreateAlertFromAddModal(body.ticker);
     await loadStocks();
     renderAll();
     document.getElementById('add-modal').classList.add('hidden');
